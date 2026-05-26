@@ -47,6 +47,34 @@ int main(int argc, char *argv[])
       .help("turn off the hindrance heuristic")
       .default_value(false)
       .implicit_value(true);
+  // adaptive PIBT bandit flags (port from lacam branch)
+  program.add_argument("--no_pibt_bandit")
+      .help("disable PIBT candidate-ranking bandit (force arm0)")
+      .default_value(false)
+      .implicit_value(true);
+  program.add_argument("--bandit_policy")
+      .help("pibt bandit policy: ucb1 | thompson | epsilon_greedy | random_uniform")
+      .default_value(std::string("ucb1"));
+  program.add_argument("--bandit_epsilon")
+      .help("epsilon for epsilon-greedy")
+      .scan<'g', double>()
+      .default_value(0.10);
+  program.add_argument("--bandit_epsilon_final")
+      .help("final epsilon for linear decay")
+      .scan<'g', double>()
+      .default_value(0.10);
+  program.add_argument("--bandit_epsilon_decay_steps")
+      .help("arm-pull count for epsilon linear decay (0 disables decay)")
+      .scan<'d', int>()
+      .default_value(0);
+  // compatibility flags (accepted for script parity; currently no-op in lacam0)
+  program.add_argument("--no_order_bandit").default_value(false).implicit_value(true);
+  program.add_argument("--no_branch_bandit").default_value(false).implicit_value(true);
+  program.add_argument("--no_scheduler_bandit").default_value(false).implicit_value(true);
+  program.add_argument("--no_random_bandit").default_value(false).implicit_value(true);
+  program.add_argument("--no_dist_bandit").default_value(false).implicit_value(true);
+  program.add_argument("--no_events_log").default_value(false).implicit_value(true);
+  program.add_argument("--pibt_regret_trials").scan<'d', int>().default_value(1);
 
   try {
     program.parse_args(argc, argv);
@@ -65,6 +93,12 @@ int main(int argc, char *argv[])
   const auto output_name = program.get<std::string>("output");
   const auto log_short = program.get<bool>("log_short");
   const auto N = program.get<int>("num");
+  const auto no_pibt_bandit = program.get<bool>("no_pibt_bandit");
+  const auto bandit_policy = program.get<std::string>("bandit_policy");
+  const auto bandit_epsilon = program.get<double>("bandit_epsilon");
+  const auto bandit_epsilon_final = program.get<double>("bandit_epsilon_final");
+  const auto bandit_epsilon_decay_steps =
+      program.get<int>("bandit_epsilon_decay_steps");
   const auto ins = scen_name.size() > 0 ? Instance(scen_name, map_name, N)
                                         : Instance(map_name, N, seed);
   if (!ins.is_valid(1)) return 1;
@@ -76,6 +110,8 @@ int main(int argc, char *argv[])
   // pibt
   PIBT::SWAP = !program.get<bool>("no_pibt_swap");
   PIBT::HINDRANCE = !program.get<bool>("no_pibt_hindrance");
+  PIBT::set_bandit_config(!no_pibt_bandit, bandit_policy, bandit_epsilon,
+                          bandit_epsilon_final, bandit_epsilon_decay_steps);
 
   // solve
   const auto deadline = Deadline(time_limit_sec * 1000);

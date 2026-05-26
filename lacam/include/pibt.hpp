@@ -18,6 +18,7 @@
  * SoCS. 2025.
  */
 #pragma once
+#include <array>
 #include "dist_table.hpp"
 #include "graph.hpp"
 #include "instance.hpp"
@@ -47,6 +48,17 @@ struct PIBT {
   // hyper parameters
   static bool SWAP;
   static bool HINDRANCE;
+  static bool USE_PIBT_BANDIT;
+  static std::string BANDIT_POLICY;
+  static double BANDIT_EPSILON;
+  static double BANDIT_EPSILON_FINAL;
+  static int BANDIT_EPSILON_DECAY_STEPS;
+
+  static void set_bandit_config(bool use_pibt_bandit,
+                                const std::string &bandit_policy,
+                                double bandit_epsilon,
+                                double bandit_epsilon_final,
+                                int bandit_epsilon_decay_steps);
 
   PIBT(const Instance *_ins, DistTable *_D, int seed = 0);
   ~PIBT();

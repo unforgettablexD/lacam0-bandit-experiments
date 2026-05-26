@@ -41,6 +41,40 @@ You can find details of all parameters with:
 build/main --help
 ```
 
+## Adaptive PIBT Bandit Extension (Local Port)
+
+This local branch includes a first port of adaptive PIBT candidate ranking with
+bandit policies.
+
+Additional CLI flags:
+
+- `--no_pibt_bandit`
+- `--bandit_policy ucb1|thompson|epsilon_greedy|random_uniform`
+- `--bandit_epsilon <float>`
+- `--bandit_epsilon_final <float>`
+- `--bandit_epsilon_decay_steps <int>`
+
+Compatibility flags accepted (currently no-op in this first lacam0 port):
+
+- `--no_order_bandit`
+- `--no_branch_bandit`
+- `--no_scheduler_bandit`
+- `--no_random_bandit`
+- `--no_dist_bandit`
+- `--no_events_log`
+- `--pibt_regret_trials <int>`
+
+### Focus-4 baseline vs Thompson+X32 runner
+
+```sh
+./scripts/run_focus4_baseline_vs_x32.sh --parallel "$(( $(nproc) - 2 ))" --time-limit 60
+```
+
+Notes:
+- By default this script reads MovingAI files from
+  `../lacam/benchmarks/movingai/data_all` (your existing data location).
+- Outputs are written to `reports/movingai/`.
+
 ## Visualizer
 
 This repository is compatible with [kei18@mapf-visualizer](https://github.com/kei18/mapf-visualizer).
