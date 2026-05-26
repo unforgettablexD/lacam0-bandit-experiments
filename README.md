@@ -54,13 +54,15 @@ Additional CLI flags:
 - `--bandit_epsilon_final <float>`
 - `--bandit_epsilon_decay_steps <int>`
 
-Compatibility flags accepted (currently no-op in this first lacam0 port):
+Additional bandit toggles:
 
 - `--no_order_bandit`
 - `--no_branch_bandit`
 - `--no_scheduler_bandit`
 - `--no_random_bandit`
 - `--no_dist_bandit`
+
+Other compatibility flags:
 - `--no_events_log`
 - `--pibt_regret_trials <int>`
 

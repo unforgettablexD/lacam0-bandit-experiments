@@ -3,6 +3,121 @@
 bool LaCAM::ANYTIME = false;
 float LaCAM::RANDOM_INSERT_PROB1 = 0.001;
 float LaCAM::RANDOM_INSERT_PROB2 = 0.001;
+bool LaCAM::USE_ORDER_BANDIT = true;
+bool LaCAM::USE_BRANCH_BANDIT = true;
+bool LaCAM::USE_SCHED_BANDIT = true;
+bool LaCAM::USE_RANDOM_BANDIT = true;
+std::string LaCAM::BANDIT_POLICY = "ucb1";
+double LaCAM::BANDIT_EPSILON = 0.10;
+double LaCAM::BANDIT_EPSILON_FINAL = 0.10;
+int LaCAM::BANDIT_EPSILON_DECAY_STEPS = 0;
+
+namespace {
+constexpr int BANDIT_ARM_COUNT = 3;
+std::array<int, BANDIT_ARM_COUNT> ORDER_PULLS = {0, 0, 0};
+std::array<double, BANDIT_ARM_COUNT> ORDER_REWARDS = {0.0, 0.0, 0.0};
+std::array<int, BANDIT_ARM_COUNT> BRANCH_PULLS = {0, 0, 0};
+std::array<double, BANDIT_ARM_COUNT> BRANCH_REWARDS = {0.0, 0.0, 0.0};
+std::array<int, BANDIT_ARM_COUNT> SCHED_PULLS = {0, 0, 0};
+std::array<double, BANDIT_ARM_COUNT> SCHED_REWARDS = {0.0, 0.0, 0.0};
+std::array<int, BANDIT_ARM_COUNT> RAND_PULLS = {0, 0, 0};
+std::array<double, BANDIT_ARM_COUNT> RAND_REWARDS = {0.0, 0.0, 0.0};
+
+double squash_reward(const double raw) { return std::tanh(raw); }
+
+int pick_arm(std::array<int, BANDIT_ARM_COUNT> &pulls,
+             std::array<double, BANDIT_ARM_COUNT> &rewards, bool enabled,
+             std::mt19937 &rng)
+{
+  if (!enabled) return 0;
+  for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
+    if (pulls[a] == 0) return a;
+  }
+  const auto policy = LaCAM::BANDIT_POLICY;
+  if (policy == "epsilon_greedy" || policy == "eps" || policy == "epsilon") {
+    int total = 0;
+    for (const auto p : pulls) total += p;
+    double eps = LaCAM::BANDIT_EPSILON;
+    if (LaCAM::BANDIT_EPSILON_DECAY_STEPS > 0) {
+      const double t = std::min(1.0, static_cast<double>(total) /
+                                         static_cast<double>(LaCAM::BANDIT_EPSILON_DECAY_STEPS));
+      eps = LaCAM::BANDIT_EPSILON +
+            (LaCAM::BANDIT_EPSILON_FINAL - LaCAM::BANDIT_EPSILON) * t;
+    }
+    std::uniform_real_distribution<double> U01(0.0, 1.0);
+    std::uniform_int_distribution<int> UArm(0, BANDIT_ARM_COUNT - 1);
+    if (U01(rng) < eps) return UArm(rng);
+    int best = 0;
+    double best_mean = -1e18;
+    for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
+      const auto mean = rewards[a] / pulls[a];
+      if (mean > best_mean) {
+        best_mean = mean;
+        best = a;
+      }
+    }
+    return best;
+  }
+  if (policy == "thompson" || policy == "ts") {
+    int best = 0;
+    double best_sample = -1e18;
+    for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
+      const auto mean = rewards[a] / pulls[a];
+      const auto sigma = 1.0 / std::sqrt((double)pulls[a]);
+      std::normal_distribution<double> N(mean, sigma);
+      const auto s = N(rng);
+      if (s > best_sample) {
+        best_sample = s;
+        best = a;
+      }
+    }
+    return best;
+  }
+  if (policy == "random_uniform" || policy == "random" || policy == "uniform_random") {
+    std::uniform_int_distribution<int> UArm(0, BANDIT_ARM_COUNT - 1);
+    return UArm(rng);
+  }
+  int total = 0;
+  for (const auto p : pulls) total += p;
+  int best = 0;
+  double best_score = -1e18;
+  for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
+    const auto mean = rewards[a] / pulls[a];
+    const auto bonus = std::sqrt(2.0 * std::log((double)total) / pulls[a]);
+    const auto score = mean + bonus;
+    if (score > best_score) {
+      best_score = score;
+      best = a;
+    }
+  }
+  return best;
+}
+
+void update_arm(std::array<int, BANDIT_ARM_COUNT> &pulls,
+                std::array<double, BANDIT_ARM_COUNT> &rewards, const int arm,
+                const double reward)
+{
+  pulls[arm] += 1;
+  rewards[arm] += reward;
+}
+}  // namespace
+
+void LaCAM::set_bandit_config(bool use_order_bandit, bool use_branch_bandit,
+                              bool use_sched_bandit, bool use_random_bandit,
+                              const std::string &bandit_policy,
+                              double bandit_epsilon,
+                              double bandit_epsilon_final,
+                              int bandit_epsilon_decay_steps)
+{
+  USE_ORDER_BANDIT = use_order_bandit;
+  USE_BRANCH_BANDIT = use_branch_bandit;
+  USE_SCHED_BANDIT = use_sched_bandit;
+  USE_RANDOM_BANDIT = use_random_bandit;
+  BANDIT_POLICY = bandit_policy.empty() ? "ucb1" : bandit_policy;
+  BANDIT_EPSILON = std::max(0.0, std::min(1.0, bandit_epsilon));
+  BANDIT_EPSILON_FINAL = std::max(0.0, std::min(1.0, bandit_epsilon_final));
+  BANDIT_EPSILON_DECAY_STEPS = std::max(0, bandit_epsilon_decay_steps);
+}
 
 bool CompareHNodePointers::operator()(const HNode *l, const HNode *r) const
 {
@@ -105,6 +220,35 @@ Solution LaCAM::solve()
   while (!OPEN.empty() && !is_expired(deadline)) {
     ++loop_cnt;
 
+    const int sched_arm = pick_arm(SCHED_PULLS, SCHED_REWARDS, USE_SCHED_BANDIT, MT);
+    int hidx = (int)OPEN.size() - 1;  // default: DFS/LIFO
+    if (sched_arm == 1) {
+      int best_idx = hidx;
+      int best_score = INT_MAX;
+      for (size_t oi = 0; oi < OPEN.size(); ++oi) {
+        auto *cand = OPEN[oi];
+        if (cand->h < best_score) {
+          best_score = cand->h;
+          best_idx = (int)oi;
+        }
+      }
+      hidx = best_idx;
+    } else if (sched_arm == 2 && OPEN.size() > 1) {
+      const float p_best = 0.5f;
+      if (rrd(MT) < p_best) {
+        int best_idx = hidx;
+        int best_score = INT_MAX;
+        for (size_t oi = 0; oi < OPEN.size(); ++oi) {
+          auto *cand = OPEN[oi];
+          if (cand->h < best_score) {
+            best_score = cand->h;
+            best_idx = (int)oi;
+          }
+        }
+        hidx = best_idx;
+      }
+    }
+
     // random insert
     if (H_goal != nullptr) {
       auto r = rrd(MT);
@@ -117,11 +261,12 @@ Solution LaCAM::solve()
     }
 
     // do not pop here!
-    auto H = OPEN.front();  // high-level node
+    auto H = OPEN[hidx];  // high-level node
 
     // check upper bounds
     if (H_goal != nullptr && H->f >= H_goal->g) {
-      OPEN.pop_front();
+      OPEN.erase(OPEN.begin() + hidx);
+      update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm, squash_reward(-0.3));
       solver_info(5, "prune, g=", H->g, " >= ", H_goal->g);
       OPEN.push_front(H_init);
       continue;
@@ -137,7 +282,8 @@ Solution LaCAM::solve()
 
     // extract constraints
     if (H->search_tree.empty()) {
-      OPEN.pop_front();
+      OPEN.erase(OPEN.begin() + hidx);
+      update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm, squash_reward(-0.2));
       continue;
     }
     auto L = H->search_tree.front();
@@ -145,9 +291,53 @@ Solution LaCAM::solve()
 
     // low level search
     if (L->depth < H->Q.size()) {
-      const auto i = H->order[L->depth];
-      auto &&C = H->Q[i]->actions;
-      std::shuffle(C.begin(), C.end(), MT);  // randomize
+      int order_arm = pick_arm(ORDER_PULLS, ORDER_REWARDS, USE_ORDER_BANDIT, MT);
+      std::vector<int> order = H->order;
+      if (order_arm == 1) {
+        std::reverse(order.begin(), order.end());
+      } else if (order_arm == 2) {
+        std::shuffle(order.begin(), order.end(), MT);
+      }
+
+      const auto i = order[L->depth];
+      auto C = H->Q[i]->actions;
+
+      int rand_arm = pick_arm(RAND_PULLS, RAND_REWARDS, USE_RANDOM_BANDIT, MT);
+      double p_shuffle = 0.1;
+      if (rand_arm == 1) p_shuffle = 0.5;
+      if (rand_arm == 2) p_shuffle = 0.9;
+      if (rrd(MT) < p_shuffle) std::shuffle(C.begin(), C.end(), MT);
+
+      int branch_arm = pick_arm(BRANCH_PULLS, BRANCH_REWARDS, USE_BRANCH_BANDIT, MT);
+      if (branch_arm == 1) {
+        std::sort(C.begin(), C.end(),
+                  [&](const Vertex *a, const Vertex *b) { return D->get(i, a) < D->get(i, b); });
+      } else if (branch_arm == 2) {
+        std::sort(C.begin(), C.end(), [&](const Vertex *a, const Vertex *b) {
+          int oa = 0, ob = 0;
+          for (auto *v : H->Q) {
+            if (v->id == a->id) ++oa;
+            if (v->id == b->id) ++ob;
+          }
+          if (oa != ob) return oa < ob;
+          return D->get(i, a) < D->get(i, b);
+        });
+      }
+
+      double order_reward = 0.0;
+      const int first = order.empty() ? -1 : order.front();
+      if (first >= 0) {
+        const auto d0 = D->get(first, H->Q[first]);
+        order_reward = (d0 > 0) ? 0.2 : 0.0;
+        if (order_arm == 0) order_reward += 0.1;
+      }
+      update_arm(ORDER_PULLS, ORDER_REWARDS, order_arm, squash_reward(order_reward));
+
+      update_arm(BRANCH_PULLS, BRANCH_REWARDS, branch_arm,
+                 squash_reward(branch_arm == 1 ? 0.15 : (branch_arm == 2 ? 0.1 : 0.05)));
+      update_arm(RAND_PULLS, RAND_REWARDS, rand_arm,
+                 squash_reward(0.1 + 0.1 * (1.0 - p_shuffle)));
+
       for (auto u : C) H->search_tree.push(new LNode(L, i, u));
     }
 
@@ -167,6 +357,7 @@ Solution LaCAM::solve()
       OPEN.push_front(H_new);
       EXPLORED[H_new->Q] = H_new;
       GC_HNodes.push_back(H_new);
+      update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm, squash_reward(0.4));
     } else {
       // known configuration
       auto H_known = iter->second;
@@ -178,6 +369,7 @@ Solution LaCAM::solve()
         solver_info(3, "random restart");
         OPEN.push_front(H_init);  // sometimes
       }
+      update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm, squash_reward(-0.1));
     }
   }
 

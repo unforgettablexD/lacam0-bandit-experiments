@@ -78,6 +78,21 @@ struct LaCAM {
   static bool ANYTIME;
   static float RANDOM_INSERT_PROB1;
   static float RANDOM_INSERT_PROB2;
+  static bool USE_ORDER_BANDIT;
+  static bool USE_BRANCH_BANDIT;
+  static bool USE_SCHED_BANDIT;
+  static bool USE_RANDOM_BANDIT;
+  static std::string BANDIT_POLICY;
+  static double BANDIT_EPSILON;
+  static double BANDIT_EPSILON_FINAL;
+  static int BANDIT_EPSILON_DECAY_STEPS;
+
+  static void set_bandit_config(bool use_order_bandit, bool use_branch_bandit,
+                                bool use_sched_bandit, bool use_random_bandit,
+                                const std::string &bandit_policy,
+                                double bandit_epsilon,
+                                double bandit_epsilon_final,
+                                int bandit_epsilon_decay_steps);
 
   LaCAM(const Instance *_ins, DistTable *_D, int _verbose = 0,
         const Deadline *_deadline = nullptr, int _seed = 0);

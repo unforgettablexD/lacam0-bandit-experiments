@@ -94,6 +94,11 @@ int main(int argc, char *argv[])
   const auto log_short = program.get<bool>("log_short");
   const auto N = program.get<int>("num");
   const auto no_pibt_bandit = program.get<bool>("no_pibt_bandit");
+  const auto no_order_bandit = program.get<bool>("no_order_bandit");
+  const auto no_branch_bandit = program.get<bool>("no_branch_bandit");
+  const auto no_scheduler_bandit = program.get<bool>("no_scheduler_bandit");
+  const auto no_random_bandit = program.get<bool>("no_random_bandit");
+  const auto no_dist_bandit = program.get<bool>("no_dist_bandit");
   const auto bandit_policy = program.get<std::string>("bandit_policy");
   const auto bandit_epsilon = program.get<double>("bandit_epsilon");
   const auto bandit_epsilon_final = program.get<double>("bandit_epsilon_final");
@@ -112,6 +117,13 @@ int main(int argc, char *argv[])
   PIBT::HINDRANCE = !program.get<bool>("no_pibt_hindrance");
   PIBT::set_bandit_config(!no_pibt_bandit, bandit_policy, bandit_epsilon,
                           bandit_epsilon_final, bandit_epsilon_decay_steps);
+  LaCAM::set_bandit_config(!no_order_bandit, !no_branch_bandit,
+                           !no_scheduler_bandit, !no_random_bandit,
+                           bandit_policy, bandit_epsilon,
+                           bandit_epsilon_final, bandit_epsilon_decay_steps);
+  DistTable::set_dist_bandit_config(!no_dist_bandit, bandit_policy,
+                                    bandit_epsilon, bandit_epsilon_final,
+                                    bandit_epsilon_decay_steps);
 
   // solve
   const auto deadline = Deadline(time_limit_sec * 1000);
