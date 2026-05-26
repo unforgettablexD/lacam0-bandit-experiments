@@ -49,6 +49,9 @@ struct PIBT {
   static bool SWAP;
   static bool HINDRANCE;
   static bool USE_PIBT_BANDIT;
+  static bool FORCE_PIBT_ARM;
+  static int FORCED_PIBT_ARM;
+  static int LAST_PIBT_ARM;
   static std::string BANDIT_POLICY;
   static double BANDIT_EPSILON;
   static double BANDIT_EPSILON_FINAL;
@@ -59,6 +62,7 @@ struct PIBT {
                                 double bandit_epsilon,
                                 double bandit_epsilon_final,
                                 int bandit_epsilon_decay_steps);
+  static void set_forced_pibt_arm(int arm);  // arm<0 disables forcing
 
   PIBT(const Instance *_ins, DistTable *_D, int seed = 0);
   ~PIBT();

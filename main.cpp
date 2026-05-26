@@ -75,6 +75,10 @@ int main(int argc, char *argv[])
   program.add_argument("--no_dist_bandit").default_value(false).implicit_value(true);
   program.add_argument("--no_events_log").default_value(false).implicit_value(true);
   program.add_argument("--pibt_regret_trials").scan<'d', int>().default_value(1);
+  program.add_argument("--bandit_hierarchy")
+      .help("enable conditional hierarchy: pibt -> order|pibt -> branch|pibt,order")
+      .default_value(false)
+      .implicit_value(true);
 
   try {
     program.parse_args(argc, argv);
@@ -104,6 +108,7 @@ int main(int argc, char *argv[])
   const auto bandit_epsilon_final = program.get<double>("bandit_epsilon_final");
   const auto bandit_epsilon_decay_steps =
       program.get<int>("bandit_epsilon_decay_steps");
+  const auto bandit_hierarchy = program.get<bool>("bandit_hierarchy");
   const auto ins = scen_name.size() > 0 ? Instance(scen_name, map_name, N)
                                         : Instance(map_name, N, seed);
   if (!ins.is_valid(1)) return 1;
@@ -119,6 +124,7 @@ int main(int argc, char *argv[])
                           bandit_epsilon_final, bandit_epsilon_decay_steps);
   LaCAM::set_bandit_config(!no_order_bandit, !no_branch_bandit,
                            !no_scheduler_bandit, !no_random_bandit,
+                           bandit_hierarchy,
                            bandit_policy, bandit_epsilon,
                            bandit_epsilon_final, bandit_epsilon_decay_steps);
   DistTable::set_dist_bandit_config(!no_dist_bandit, bandit_policy,

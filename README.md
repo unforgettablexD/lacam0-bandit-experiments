@@ -61,6 +61,7 @@ Additional bandit toggles:
 - `--no_scheduler_bandit`
 - `--no_random_bandit`
 - `--no_dist_bandit`
+- `--bandit_hierarchy` (conditional hierarchy: sample PIBT arm, then order conditioned on PIBT, then branch conditioned on PIBT+order)
 
 Other compatibility flags:
 - `--no_events_log`

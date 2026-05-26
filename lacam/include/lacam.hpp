@@ -82,6 +82,7 @@ struct LaCAM {
   static bool USE_BRANCH_BANDIT;
   static bool USE_SCHED_BANDIT;
   static bool USE_RANDOM_BANDIT;
+  static bool USE_BANDIT_HIERARCHY;
   static std::string BANDIT_POLICY;
   static double BANDIT_EPSILON;
   static double BANDIT_EPSILON_FINAL;
@@ -89,6 +90,7 @@ struct LaCAM {
 
   static void set_bandit_config(bool use_order_bandit, bool use_branch_bandit,
                                 bool use_sched_bandit, bool use_random_bandit,
+                                bool use_bandit_hierarchy,
                                 const std::string &bandit_policy,
                                 double bandit_epsilon,
                                 double bandit_epsilon_final,

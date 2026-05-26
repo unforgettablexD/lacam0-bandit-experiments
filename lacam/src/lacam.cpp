@@ -7,6 +7,7 @@ bool LaCAM::USE_ORDER_BANDIT = true;
 bool LaCAM::USE_BRANCH_BANDIT = true;
 bool LaCAM::USE_SCHED_BANDIT = true;
 bool LaCAM::USE_RANDOM_BANDIT = true;
+bool LaCAM::USE_BANDIT_HIERARCHY = false;
 std::string LaCAM::BANDIT_POLICY = "ucb1";
 double LaCAM::BANDIT_EPSILON = 0.10;
 double LaCAM::BANDIT_EPSILON_FINAL = 0.10;
@@ -22,6 +23,12 @@ std::array<int, BANDIT_ARM_COUNT> SCHED_PULLS = {0, 0, 0};
 std::array<double, BANDIT_ARM_COUNT> SCHED_REWARDS = {0.0, 0.0, 0.0};
 std::array<int, BANDIT_ARM_COUNT> RAND_PULLS = {0, 0, 0};
 std::array<double, BANDIT_ARM_COUNT> RAND_REWARDS = {0.0, 0.0, 0.0};
+std::array<int, BANDIT_ARM_COUNT> PIBT_PULLS = {0, 0, 0};
+std::array<double, BANDIT_ARM_COUNT> PIBT_REWARDS = {0.0, 0.0, 0.0};
+std::array<std::array<int, BANDIT_ARM_COUNT>, BANDIT_ARM_COUNT> ORDER_PULLS_C = {};
+std::array<std::array<double, BANDIT_ARM_COUNT>, BANDIT_ARM_COUNT> ORDER_REWARDS_C = {};
+std::array<std::array<std::array<int, BANDIT_ARM_COUNT>, BANDIT_ARM_COUNT>, BANDIT_ARM_COUNT> BRANCH_PULLS_C = {};
+std::array<std::array<std::array<double, BANDIT_ARM_COUNT>, BANDIT_ARM_COUNT>, BANDIT_ARM_COUNT> BRANCH_REWARDS_C = {};
 
 double squash_reward(const double raw) { return std::tanh(raw); }
 
@@ -104,6 +111,7 @@ void update_arm(std::array<int, BANDIT_ARM_COUNT> &pulls,
 
 void LaCAM::set_bandit_config(bool use_order_bandit, bool use_branch_bandit,
                               bool use_sched_bandit, bool use_random_bandit,
+                              bool use_bandit_hierarchy,
                               const std::string &bandit_policy,
                               double bandit_epsilon,
                               double bandit_epsilon_final,
@@ -113,6 +121,7 @@ void LaCAM::set_bandit_config(bool use_order_bandit, bool use_branch_bandit,
   USE_BRANCH_BANDIT = use_branch_bandit;
   USE_SCHED_BANDIT = use_sched_bandit;
   USE_RANDOM_BANDIT = use_random_bandit;
+  USE_BANDIT_HIERARCHY = use_bandit_hierarchy;
   BANDIT_POLICY = bandit_policy.empty() ? "ucb1" : bandit_policy;
   BANDIT_EPSILON = std::max(0.0, std::min(1.0, bandit_epsilon));
   BANDIT_EPSILON_FINAL = std::max(0.0, std::min(1.0, bandit_epsilon_final));
@@ -221,6 +230,7 @@ Solution LaCAM::solve()
     ++loop_cnt;
 
     const int sched_arm = pick_arm(SCHED_PULLS, SCHED_REWARDS, USE_SCHED_BANDIT, MT);
+    const int pibt_arm = USE_BANDIT_HIERARCHY ? pick_arm(PIBT_PULLS, PIBT_REWARDS, true, MT) : -1;
     int hidx = (int)OPEN.size() - 1;  // default: DFS/LIFO
     if (sched_arm == 1) {
       int best_idx = hidx;
@@ -291,7 +301,12 @@ Solution LaCAM::solve()
 
     // low level search
     if (L->depth < H->Q.size()) {
-      int order_arm = pick_arm(ORDER_PULLS, ORDER_REWARDS, USE_ORDER_BANDIT, MT);
+      int order_arm = 0;
+      if (USE_BANDIT_HIERARCHY) {
+        order_arm = pick_arm(ORDER_PULLS_C[pibt_arm], ORDER_REWARDS_C[pibt_arm], USE_ORDER_BANDIT, MT);
+      } else {
+        order_arm = pick_arm(ORDER_PULLS, ORDER_REWARDS, USE_ORDER_BANDIT, MT);
+      }
       std::vector<int> order = H->order;
       if (order_arm == 1) {
         std::reverse(order.begin(), order.end());
@@ -308,7 +323,12 @@ Solution LaCAM::solve()
       if (rand_arm == 2) p_shuffle = 0.9;
       if (rrd(MT) < p_shuffle) std::shuffle(C.begin(), C.end(), MT);
 
-      int branch_arm = pick_arm(BRANCH_PULLS, BRANCH_REWARDS, USE_BRANCH_BANDIT, MT);
+      int branch_arm = 0;
+      if (USE_BANDIT_HIERARCHY) {
+        branch_arm = pick_arm(BRANCH_PULLS_C[pibt_arm][order_arm], BRANCH_REWARDS_C[pibt_arm][order_arm], USE_BRANCH_BANDIT, MT);
+      } else {
+        branch_arm = pick_arm(BRANCH_PULLS, BRANCH_REWARDS, USE_BRANCH_BANDIT, MT);
+      }
       if (branch_arm == 1) {
         std::sort(C.begin(), C.end(),
                   [&](const Vertex *a, const Vertex *b) { return D->get(i, a) < D->get(i, b); });
@@ -331,10 +351,19 @@ Solution LaCAM::solve()
         order_reward = (d0 > 0) ? 0.2 : 0.0;
         if (order_arm == 0) order_reward += 0.1;
       }
-      update_arm(ORDER_PULLS, ORDER_REWARDS, order_arm, squash_reward(order_reward));
+      if (USE_BANDIT_HIERARCHY) {
+        update_arm(ORDER_PULLS_C[pibt_arm], ORDER_REWARDS_C[pibt_arm], order_arm, squash_reward(order_reward));
+      } else {
+        update_arm(ORDER_PULLS, ORDER_REWARDS, order_arm, squash_reward(order_reward));
+      }
 
-      update_arm(BRANCH_PULLS, BRANCH_REWARDS, branch_arm,
-                 squash_reward(branch_arm == 1 ? 0.15 : (branch_arm == 2 ? 0.1 : 0.05)));
+      if (USE_BANDIT_HIERARCHY) {
+        update_arm(BRANCH_PULLS_C[pibt_arm][order_arm], BRANCH_REWARDS_C[pibt_arm][order_arm], branch_arm,
+                   squash_reward(branch_arm == 1 ? 0.15 : (branch_arm == 2 ? 0.1 : 0.05)));
+      } else {
+        update_arm(BRANCH_PULLS, BRANCH_REWARDS, branch_arm,
+                   squash_reward(branch_arm == 1 ? 0.15 : (branch_arm == 2 ? 0.1 : 0.05)));
+      }
       update_arm(RAND_PULLS, RAND_REWARDS, rand_arm,
                  squash_reward(0.1 + 0.1 * (1.0 - p_shuffle)));
 
@@ -343,9 +372,15 @@ Solution LaCAM::solve()
 
     // create successors at the high-level search
     auto Q_to = Config(ins->N, nullptr);
+    if (USE_BANDIT_HIERARCHY) PIBT::set_forced_pibt_arm(pibt_arm);
     auto res = set_new_config(H, L, Q_to);
+    if (USE_BANDIT_HIERARCHY) PIBT::set_forced_pibt_arm(-1);
     delete L;
-    if (!res) continue;
+    if (!res) {
+      if (USE_BANDIT_HIERARCHY) update_arm(PIBT_PULLS, PIBT_REWARDS, pibt_arm, squash_reward(-0.8));
+      continue;
+    }
+    if (USE_BANDIT_HIERARCHY) update_arm(PIBT_PULLS, PIBT_REWARDS, pibt_arm, squash_reward(0.4));
 
     // check explored list
     auto iter = EXPLORED.find(Q_to);

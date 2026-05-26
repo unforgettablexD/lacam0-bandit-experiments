@@ -3,6 +3,9 @@
 bool PIBT::SWAP = true;
 bool PIBT::HINDRANCE = true;
 bool PIBT::USE_PIBT_BANDIT = true;
+bool PIBT::FORCE_PIBT_ARM = false;
+int PIBT::FORCED_PIBT_ARM = 0;
+int PIBT::LAST_PIBT_ARM = 0;
 std::string PIBT::BANDIT_POLICY = "ucb1";
 double PIBT::BANDIT_EPSILON = 0.10;
 double PIBT::BANDIT_EPSILON_FINAL = 0.10;
@@ -106,6 +109,16 @@ void PIBT::set_bandit_config(bool use_pibt_bandit,
   BANDIT_EPSILON_DECAY_STEPS = std::max(0, bandit_epsilon_decay_steps);
 }
 
+void PIBT::set_forced_pibt_arm(int arm)
+{
+  if (arm < 0) {
+    FORCE_PIBT_ARM = false;
+    return;
+  }
+  FORCE_PIBT_ARM = true;
+  FORCED_PIBT_ARM = std::max(0, std::min(2, arm));
+}
+
 PIBT::PIBT(const Instance *_ins, DistTable *_D, int seed)
     : ins(_ins),
       MT(seed),
@@ -170,7 +183,8 @@ bool PIBT::set_new_config(const Config &Q_from, Config &Q_to,
 bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
 {
   const auto K = Q_from[i]->neighbors.size();
-  const auto selected_arm = pick_arm(MT);
+  const auto selected_arm = FORCE_PIBT_ARM ? FORCED_PIBT_ARM : pick_arm(MT);
+  LAST_PIBT_ARM = selected_arm;
   const auto d_now = D->get(i, Q_from[i]);
   const bool at_goal_now = (d_now == 0);
 
