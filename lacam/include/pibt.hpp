@@ -56,12 +56,16 @@ struct PIBT {
   static double BANDIT_EPSILON;
   static double BANDIT_EPSILON_FINAL;
   static int BANDIT_EPSILON_DECAY_STEPS;
+  static std::string REWARD_AUTOSCALE_MODE;   // off | zscore
+  static std::string REWARD_WEIGHT_LEARNING;  // off | online_linear
 
   static void set_bandit_config(bool use_pibt_bandit,
                                 const std::string &bandit_policy,
                                 double bandit_epsilon,
                                 double bandit_epsilon_final,
                                 int bandit_epsilon_decay_steps);
+  static void set_reward_config(const std::string &reward_autoscale_mode,
+                                const std::string &reward_weight_learning);
   static void set_forced_pibt_arm(int arm);  // arm<0 disables forcing
 
   PIBT(const Instance *_ins, DistTable *_D, int seed = 0);

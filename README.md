@@ -62,6 +62,10 @@ Additional bandit toggles:
 - `--no_random_bandit`
 - `--no_dist_bandit`
 - `--bandit_hierarchy` (conditional hierarchy: sample PIBT arm, then order conditioned on PIBT, then branch conditioned on PIBT+order)
+- `--order_bandit_mode coarse3|agent_level`
+- `--order_agent_reward first_only|topk`
+- `--reward_autoscale off|zscore`
+- `--reward_weight_learning off|online_linear`
 
 Other compatibility flags:
 - `--no_events_log`

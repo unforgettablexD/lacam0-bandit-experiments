@@ -10,11 +10,33 @@ std::string PIBT::BANDIT_POLICY = "ucb1";
 double PIBT::BANDIT_EPSILON = 0.10;
 double PIBT::BANDIT_EPSILON_FINAL = 0.10;
 int PIBT::BANDIT_EPSILON_DECAY_STEPS = 0;
+std::string PIBT::REWARD_AUTOSCALE_MODE = "off";
+std::string PIBT::REWARD_WEIGHT_LEARNING = "off";
 
 namespace {
 constexpr int BANDIT_ARM_COUNT = 3;
 std::array<int, BANDIT_ARM_COUNT> PIBT_ARM_PULLS = {0, 0, 0};
 std::array<double, BANDIT_ARM_COUNT> PIBT_ARM_REWARDS = {0.0, 0.0, 0.0};
+
+struct RunningStat {
+  int n = 0;
+  double mean = 0.0;
+  double m2 = 0.0;
+  void update(double x) {
+    n += 1;
+    const double d = x - mean;
+    mean += d / n;
+    const double d2 = x - mean;
+    m2 += d * d2;
+  }
+  double stddev() const { return (n > 1) ? std::sqrt(m2 / (n - 1)) : 1.0; }
+  double z(double x) const {
+    const double s = std::max(1e-6, stddev());
+    return (x - mean) / s;
+  }
+};
+RunningStat ST_GOAL, ST_DELAY, ST_STAY, ST_LEAVE, ST_OCC;
+double W_GOAL = 1.0, W_DELAY = 1.0, W_STAY = 1.0, W_LEAVE = 1.0, W_OCC = 1.0;
 
 double squash_reward(const double raw_reward) { return std::tanh(raw_reward); }
 
@@ -117,6 +139,14 @@ void PIBT::set_forced_pibt_arm(int arm)
   }
   FORCE_PIBT_ARM = true;
   FORCED_PIBT_ARM = std::max(0, std::min(2, arm));
+}
+
+void PIBT::set_reward_config(const std::string &reward_autoscale_mode,
+                             const std::string &reward_weight_learning)
+{
+  REWARD_AUTOSCALE_MODE = reward_autoscale_mode.empty() ? "off" : reward_autoscale_mode;
+  REWARD_WEIGHT_LEARNING =
+      reward_weight_learning.empty() ? "off" : reward_weight_learning;
 }
 
 PIBT::PIBT(const Instance *_ins, DistTable *_D, int seed)
@@ -285,8 +315,33 @@ bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
     const double leave_goal_penalty = (at_goal_now && !at_goal_next) ? 1.5 : 0.0;
     const double occupancy_penalty = (j != NO_AGENT && !stay_move) ? 0.20 : 0.0;
     const double goal_bonus = (!at_goal_now && at_goal_next) ? 0.50 : 0.0;
-    const double immediate_reward = squash_reward(
-        goal_bonus - delay_penalty - stay_penalty - leave_goal_penalty - occupancy_penalty);
+    ST_GOAL.update(goal_bonus);
+    ST_DELAY.update(delay_penalty);
+    ST_STAY.update(stay_penalty);
+    ST_LEAVE.update(leave_goal_penalty);
+    ST_OCC.update(occupancy_penalty);
+    const bool zscore = (REWARD_AUTOSCALE_MODE == "zscore");
+    const double goal_term = zscore ? ST_GOAL.z(goal_bonus) : goal_bonus;
+    const double delay_term = zscore ? ST_DELAY.z(delay_penalty) : delay_penalty;
+    const double stay_term = zscore ? ST_STAY.z(stay_penalty) : stay_penalty;
+    const double leave_term = zscore ? ST_LEAVE.z(leave_goal_penalty) : leave_goal_penalty;
+    const double occ_term = zscore ? ST_OCC.z(occupancy_penalty) : occupancy_penalty;
+    const double raw_reward =
+        W_GOAL * goal_term - W_DELAY * delay_term - W_STAY * stay_term -
+        W_LEAVE * leave_term - W_OCC * occ_term;
+    const double immediate_reward = squash_reward(raw_reward);
+
+    if (REWARD_WEIGHT_LEARNING == "online_linear") {
+      // simple online adaptation: predict step quality (+1 progress, -1 no progress)
+      const double y = (d_next < d_now) ? 1.0 : -1.0;
+      const double err = y - raw_reward;
+      constexpr double lr = 0.01;
+      W_GOAL = std::max(0.0, std::min(3.0, W_GOAL + lr * err * goal_term));
+      W_DELAY = std::max(0.0, std::min(3.0, W_DELAY - lr * err * delay_term));
+      W_STAY = std::max(0.0, std::min(3.0, W_STAY - lr * err * stay_term));
+      W_LEAVE = std::max(0.0, std::min(3.0, W_LEAVE - lr * err * leave_term));
+      W_OCC = std::max(0.0, std::min(3.0, W_OCC - lr * err * occ_term));
+    }
 
     // priority inheritance
     if (j != NO_AGENT && u != Q_from[i] && Q_to[j] == nullptr &&

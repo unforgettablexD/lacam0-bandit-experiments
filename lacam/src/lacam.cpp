@@ -12,6 +12,8 @@ std::string LaCAM::BANDIT_POLICY = "ucb1";
 double LaCAM::BANDIT_EPSILON = 0.10;
 double LaCAM::BANDIT_EPSILON_FINAL = 0.10;
 int LaCAM::BANDIT_EPSILON_DECAY_STEPS = 0;
+std::string LaCAM::ORDER_BANDIT_MODE = "coarse3";
+std::string LaCAM::ORDER_AGENT_REWARD = "first_only";
 
 namespace {
 constexpr int BANDIT_ARM_COUNT = 3;
@@ -115,7 +117,9 @@ void LaCAM::set_bandit_config(bool use_order_bandit, bool use_branch_bandit,
                               const std::string &bandit_policy,
                               double bandit_epsilon,
                               double bandit_epsilon_final,
-                              int bandit_epsilon_decay_steps)
+                              int bandit_epsilon_decay_steps,
+                              const std::string &order_bandit_mode,
+                              const std::string &order_agent_reward)
 {
   USE_ORDER_BANDIT = use_order_bandit;
   USE_BRANCH_BANDIT = use_branch_bandit;
@@ -126,6 +130,8 @@ void LaCAM::set_bandit_config(bool use_order_bandit, bool use_branch_bandit,
   BANDIT_EPSILON = std::max(0.0, std::min(1.0, bandit_epsilon));
   BANDIT_EPSILON_FINAL = std::max(0.0, std::min(1.0, bandit_epsilon_final));
   BANDIT_EPSILON_DECAY_STEPS = std::max(0, bandit_epsilon_decay_steps);
+  ORDER_BANDIT_MODE = order_bandit_mode.empty() ? "coarse3" : order_bandit_mode;
+  ORDER_AGENT_REWARD = order_agent_reward.empty() ? "first_only" : order_agent_reward;
 }
 
 bool CompareHNodePointers::operator()(const HNode *l, const HNode *r) const
@@ -201,6 +207,8 @@ LaCAM::LaCAM(const Instance *_ins, DistTable *_D, int _verbose,
       MT(seed),
       rrd(0, 1),
       verbose(_verbose),
+      order_agent_pulls(ins->N, 0),
+      order_agent_rewards(ins->N, 0.0),
       pibt(ins, D, seed),
       H_goal(nullptr),
       OPEN(),
@@ -301,17 +309,36 @@ Solution LaCAM::solve()
 
     // low level search
     if (L->depth < H->Q.size()) {
-      int order_arm = 0;
-      if (USE_BANDIT_HIERARCHY) {
-        order_arm = pick_arm(ORDER_PULLS_C[pibt_arm], ORDER_REWARDS_C[pibt_arm], USE_ORDER_BANDIT, MT);
-      } else {
-        order_arm = pick_arm(ORDER_PULLS, ORDER_REWARDS, USE_ORDER_BANDIT, MT);
-      }
       std::vector<int> order = H->order;
-      if (order_arm == 1) {
-        std::reverse(order.begin(), order.end());
-      } else if (order_arm == 2) {
-        std::shuffle(order.begin(), order.end(), MT);
+      int order_arm = 0;
+      if (ORDER_BANDIT_MODE == "agent_level") {
+        std::vector<std::pair<double, int>> sampled;
+        sampled.reserve(order.size());
+        for (auto aid : order) {
+          double mean = 0.0;
+          double sigma = 1.0;
+          if (order_agent_pulls[aid] > 0) {
+            mean = order_agent_rewards[aid] / order_agent_pulls[aid];
+            sigma = 1.0 / std::sqrt((double)order_agent_pulls[aid]);
+          }
+          std::normal_distribution<double> N(mean, sigma);
+          sampled.push_back({N(MT), aid});
+        }
+        std::sort(sampled.begin(), sampled.end(),
+                  [](const auto &a, const auto &b) { return a.first > b.first; });
+        order.clear();
+        for (const auto &p : sampled) order.push_back(p.second);
+      } else {
+        if (USE_BANDIT_HIERARCHY) {
+          order_arm = pick_arm(ORDER_PULLS_C[pibt_arm], ORDER_REWARDS_C[pibt_arm], USE_ORDER_BANDIT, MT);
+        } else {
+          order_arm = pick_arm(ORDER_PULLS, ORDER_REWARDS, USE_ORDER_BANDIT, MT);
+        }
+        if (order_arm == 1) {
+          std::reverse(order.begin(), order.end());
+        } else if (order_arm == 2) {
+          std::shuffle(order.begin(), order.end(), MT);
+        }
       }
 
       const auto i = order[L->depth];
@@ -351,7 +378,22 @@ Solution LaCAM::solve()
         order_reward = (d0 > 0) ? 0.2 : 0.0;
         if (order_arm == 0) order_reward += 0.1;
       }
-      if (USE_BANDIT_HIERARCHY) {
+      if (ORDER_BANDIT_MODE == "agent_level") {
+        if (!order.empty()) {
+          if (ORDER_AGENT_REWARD == "topk") {
+            const int k = std::min<int>(5, order.size());
+            for (int t = 0; t < k; ++t) {
+              const int aid = order[t];
+              order_agent_pulls[aid] += 1;
+              order_agent_rewards[aid] += order_reward / std::max(1, k);
+            }
+          } else {
+            const int aid = order.front();
+            order_agent_pulls[aid] += 1;
+            order_agent_rewards[aid] += order_reward;
+          }
+        }
+      } else if (USE_BANDIT_HIERARCHY) {
         update_arm(ORDER_PULLS_C[pibt_arm], ORDER_REWARDS_C[pibt_arm], order_arm, squash_reward(order_reward));
       } else {
         update_arm(ORDER_PULLS, ORDER_REWARDS, order_arm, squash_reward(order_reward));

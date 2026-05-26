@@ -79,6 +79,18 @@ int main(int argc, char *argv[])
       .help("enable conditional hierarchy: pibt -> order|pibt -> branch|pibt,order")
       .default_value(false)
       .implicit_value(true);
+  program.add_argument("--order_bandit_mode")
+      .help("order bandit mode: coarse3 | agent_level")
+      .default_value(std::string("coarse3"));
+  program.add_argument("--order_agent_reward")
+      .help("agent-level order reward: first_only | topk")
+      .default_value(std::string("first_only"));
+  program.add_argument("--reward_autoscale")
+      .help("PIBT reward autoscale: off | zscore")
+      .default_value(std::string("off"));
+  program.add_argument("--reward_weight_learning")
+      .help("PIBT reward weight learning: off | online_linear")
+      .default_value(std::string("off"));
 
   try {
     program.parse_args(argc, argv);
@@ -109,6 +121,11 @@ int main(int argc, char *argv[])
   const auto bandit_epsilon_decay_steps =
       program.get<int>("bandit_epsilon_decay_steps");
   const auto bandit_hierarchy = program.get<bool>("bandit_hierarchy");
+  const auto order_bandit_mode = program.get<std::string>("order_bandit_mode");
+  const auto order_agent_reward = program.get<std::string>("order_agent_reward");
+  const auto reward_autoscale = program.get<std::string>("reward_autoscale");
+  const auto reward_weight_learning =
+      program.get<std::string>("reward_weight_learning");
   const auto ins = scen_name.size() > 0 ? Instance(scen_name, map_name, N)
                                         : Instance(map_name, N, seed);
   if (!ins.is_valid(1)) return 1;
@@ -122,11 +139,13 @@ int main(int argc, char *argv[])
   PIBT::HINDRANCE = !program.get<bool>("no_pibt_hindrance");
   PIBT::set_bandit_config(!no_pibt_bandit, bandit_policy, bandit_epsilon,
                           bandit_epsilon_final, bandit_epsilon_decay_steps);
+  PIBT::set_reward_config(reward_autoscale, reward_weight_learning);
   LaCAM::set_bandit_config(!no_order_bandit, !no_branch_bandit,
                            !no_scheduler_bandit, !no_random_bandit,
                            bandit_hierarchy,
                            bandit_policy, bandit_epsilon,
-                           bandit_epsilon_final, bandit_epsilon_decay_steps);
+                           bandit_epsilon_final, bandit_epsilon_decay_steps,
+                           order_bandit_mode, order_agent_reward);
   DistTable::set_dist_bandit_config(!no_dist_bandit, bandit_policy,
                                     bandit_epsilon, bandit_epsilon_final,
                                     bandit_epsilon_decay_steps);

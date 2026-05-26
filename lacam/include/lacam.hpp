@@ -67,6 +67,8 @@ struct LaCAM {
   std::mt19937 MT;
   std::uniform_real_distribution<float> rrd;  // random, real distribution
   const int verbose;
+  std::vector<int> order_agent_pulls;
+  std::vector<double> order_agent_rewards;
 
   // solver utils
   PIBT pibt;
@@ -87,6 +89,8 @@ struct LaCAM {
   static double BANDIT_EPSILON;
   static double BANDIT_EPSILON_FINAL;
   static int BANDIT_EPSILON_DECAY_STEPS;
+  static std::string ORDER_BANDIT_MODE;     // coarse3 | agent_level
+  static std::string ORDER_AGENT_REWARD;    // first_only | topk
 
   static void set_bandit_config(bool use_order_bandit, bool use_branch_bandit,
                                 bool use_sched_bandit, bool use_random_bandit,
@@ -94,7 +98,9 @@ struct LaCAM {
                                 const std::string &bandit_policy,
                                 double bandit_epsilon,
                                 double bandit_epsilon_final,
-                                int bandit_epsilon_decay_steps);
+                                int bandit_epsilon_decay_steps,
+                                const std::string &order_bandit_mode,
+                                const std::string &order_agent_reward);
 
   LaCAM(const Instance *_ins, DistTable *_D, int _verbose = 0,
         const Deadline *_deadline = nullptr, int _seed = 0);
