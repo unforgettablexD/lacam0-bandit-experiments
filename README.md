@@ -77,6 +77,17 @@ Other compatibility flags:
 ./scripts/run_focus4_baseline_vs_x32.sh --parallel "$(( $(nproc) - 2 ))" --time-limit 60
 ```
 
+### Focus-4 next-steps sweep (hierarchy + agent-level order + reward auto-modes)
+
+```sh
+./scripts/run_focus4_nextsteps_sweep.sh --parallel "$(( $(nproc) - 2 ))" --time-limit 60
+```
+
+Outputs:
+- raw per-scenario CSV
+- map-wise baseline comparison CSV (solved-only SOC)
+- ranked Markdown summary
+
 Notes:
 - By default this script reads MovingAI files from
   `../lacam/benchmarks/movingai/data_all` (your existing data location).
