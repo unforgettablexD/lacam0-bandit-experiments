@@ -83,6 +83,12 @@ Other compatibility flags:
 ./scripts/run_focus4_nextsteps_sweep.sh --parallel "$(( $(nproc) - 2 ))" --time-limit 60
 ```
 
+Resume a crashed run:
+
+```sh
+./scripts/run_focus4_nextsteps_sweep.sh --run-id <existing_run_id> --parallel "$(( $(nproc) - 2 ))" --time-limit 60
+```
+
 Outputs:
 - raw per-scenario CSV
 - map-wise baseline comparison CSV (solved-only SOC)

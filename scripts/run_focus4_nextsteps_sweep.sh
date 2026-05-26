@@ -18,6 +18,8 @@ RUN_ID="$(date +%Y%m%d_%H%M%S)_lacam0_focus4_nextsteps_sweep"
 RAW_CSV="$OUT_DIR/${RUN_ID}.csv"
 MAPWISE_CSV="$OUT_DIR/${RUN_ID}_mapwise.csv"
 SUMMARY_MD="$OUT_DIR/${RUN_ID}_summary.md"
+CHECKPOINT_DIR="$OUT_DIR/${RUN_ID}_checkpoints"
+RESUME_RUN_ID=""
 
 usage() {
   cat <<EOF
@@ -25,6 +27,7 @@ Usage: $0 [options]
   --parallel N
   --time-limit N
   --data-root PATH
+  --run-id ID        Resume/rebuild an existing run id
 EOF
 }
 
@@ -33,20 +36,37 @@ while [[ $# -gt 0 ]]; do
     --parallel) PARALLEL="$2"; shift 2 ;;
     --time-limit) TIME_LIMIT="$2"; shift 2 ;;
     --data-root) DATA_ROOT="$2"; shift 2 ;;
+    --run-id) RESUME_RUN_ID="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; usage; exit 1 ;;
   esac
 done
+
+if [[ -n "$RESUME_RUN_ID" ]]; then
+  RUN_ID="$RESUME_RUN_ID"
+  RAW_CSV="$OUT_DIR/${RUN_ID}.csv"
+  MAPWISE_CSV="$OUT_DIR/${RUN_ID}_mapwise.csv"
+  SUMMARY_MD="$OUT_DIR/${RUN_ID}_summary.md"
+  CHECKPOINT_DIR="$OUT_DIR/${RUN_ID}_checkpoints"
+fi
 
 if [[ ! -x "$ROOT_DIR/build/main" ]]; then
   echo "Missing binary: $ROOT_DIR/build/main" >&2
   exit 1
 fi
 
-echo "variant,config,map,scen,agents,solved,soc,makespan,sum_of_loss,comp_time" > "$RAW_CSV"
+mkdir -p "$CHECKPOINT_DIR"
 
 run_case() {
-  local variant="$1" cfg="$2" map="$3" scen="$4" agents="$5" cargs="$6"
+  local variant="$1" cfg="$2" map="$3" scen="$4" agents="$5" cargs="$6" ckpt_dir="$7"
+  local mapb scenb key ckpt
+  mapb="$(basename "$map")"
+  scenb="$(basename "$scen")"
+  key="${variant}__${cfg}__${mapb}__${scenb}__N${agents}"
+  ckpt="${ckpt_dir}/${key}.csvline"
+  if [[ -f "$ckpt" ]]; then
+    return 0
+  fi
   local out="/tmp/lacam0_next_${RANDOM}_${RANDOM}.txt"
   "$ROOT_DIR/build/main" -m "$map" -i "$scen" -N "$agents" -t "$TIME_LIMIT" -v 0 -o "$out" $cargs >/dev/null || true
   local solved soc mk sol ct
@@ -55,11 +75,12 @@ run_case() {
   mk="$(awk -F= '/^makespan=/{print $2}' "$out" 2>/dev/null || echo 0)"
   sol="$(awk -F= '/^sum_of_loss=/{print $2}' "$out" 2>/dev/null || echo 0)"
   ct="$(awk -F= '/^comp_time=/{print $2}' "$out" 2>/dev/null || echo 0)"
-  echo "$variant,$cfg,$(basename "$map"),$(basename "$scen"),$agents,$solved,$soc,$mk,$sol,$ct" >> "$RAW_CSV"
+  echo "$variant,$cfg,$mapb,$scenb,$agents,$solved,$soc,$mk,$sol,$ct" > "${ckpt}.tmp"
+  mv "${ckpt}.tmp" "$ckpt"
   rm -f "$out"
 }
 
-export ROOT_DIR TIME_LIMIT RAW_CSV
+export ROOT_DIR TIME_LIMIT
 export -f run_case
 
 declare -a MAPS=(
@@ -75,7 +96,7 @@ for m in "${MAPS[@]}"; do
   full_map="$DATA_ROOT/$map"
   echo "[$(date '+%F %T')] baseline map=$map N=$agents"
   seq 1 25 | xargs -I{} -P "$PARALLEL" bash -lc \
-    "run_case 'baseline' 'X00' '$full_map' '$DATA_ROOT/scen-random/${scenprefix}-{}.scen' '$agents' '--no_pibt_bandit --no_order_bandit --no_branch_bandit --no_scheduler_bandit --no_random_bandit --no_dist_bandit'"
+    "run_case 'baseline' 'X00' '$full_map' '$DATA_ROOT/scen-random/${scenprefix}-{}.scen' '$agents' '--no_pibt_bandit --no_order_bandit --no_branch_bandit --no_scheduler_bandit --no_random_bandit --no_dist_bandit' '$CHECKPOINT_DIR'"
 done
 
 # Candidate sweeps (all are Thompson + X32-style toggles)
@@ -100,12 +121,18 @@ for om in "${ORDER_MODES[@]}"; do
           full_map="$DATA_ROOT/$map"
           echo "[$(date '+%F %T')] $variant map=$map N=$agents"
           seq 1 25 | xargs -I{} -P "$PARALLEL" bash -lc \
-            "run_case '$variant' 'X32' '$full_map' '$DATA_ROOT/scen-random/${scenprefix}-{}.scen' '$agents' '$cargs'"
+            "run_case '$variant' 'X32' '$full_map' '$DATA_ROOT/scen-random/${scenprefix}-{}.scen' '$agents' '$cargs' '$CHECKPOINT_DIR'"
         done
       done
     done
   done
 done
+
+# Rebuild raw CSV from checkpoints every run/resume
+{
+  echo "variant,config,map,scen,agents,solved,soc,makespan,sum_of_loss,comp_time"
+  find "$CHECKPOINT_DIR" -type f -name '*.csvline' | sort | xargs -r cat
+} > "$RAW_CSV"
 
 python3 - << 'PY' "$RAW_CSV" "$MAPWISE_CSV" "$SUMMARY_MD"
 import csv, sys
