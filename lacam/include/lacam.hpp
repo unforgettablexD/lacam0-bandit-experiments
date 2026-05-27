@@ -97,6 +97,7 @@ struct LaCAM {
   static double MCCG_SCORE_W_STAY;
   static double MCCG_SCORE_W_PROGRESS;
   static double MCCG_SCORE_W_REGRESS;
+  static bool MCCG_SCORE_STALL_ONLY;
   static std::string ORDER_BANDIT_MODE;     // coarse3 | agent_level
   static std::string ORDER_AGENT_REWARD;    // first_only | topk
 
@@ -114,7 +115,8 @@ struct LaCAM {
         const Deadline *_deadline = nullptr, int _seed = 0);
   ~LaCAM();
   Solution solve();
-    bool set_new_config(HNode *S, LNode *M, Config &Q_to, int rollout_budget);
+  bool set_new_config(HNode *S, LNode *M, Config &Q_to, int rollout_budget,
+                      bool stall_mode);
   void rewrite(HNode *H_from, HNode *H_to);
   int get_g_val(HNode *H_parent, const Config &Q_to);
   int get_h_val(const Config &Q);

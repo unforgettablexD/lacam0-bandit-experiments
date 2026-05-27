@@ -162,6 +162,24 @@
   - The two tested score-weight settings did not improve SOC and degraded runtime tails.
   - Keep default scoring weights (edge=1, h=1, other terms=0) for retained adaptive MCCG profile.
 
+### Stall-only gating for MCCG score terms
+
+- Solver extension:
+  - Added `--mccg_score_stall_only` to apply stay/progress/regress score terms only when LaCAM enters stall mode.
+- Tested settings with stall-only gate (same score weights as prior failed tests):
+  - Run ID: 20260526_220621, stay=0.2, progress=0.8, regress=1.2, stall_only=1
+  - Run ID: 20260526_220909, stay=0.1, progress=1.2, regress=1.6, stall_only=1
+- Aggregate comparison vs baseline (mean over 5 maps):
+  - mc_adaptive_4_2_3 (211539): mean SOC +0.536, mean median-CT +5.398, mean p95-CT +3.520
+  - mc_score_A_nonstall (215156): mean SOC +0.536, mean median-CT -2.786, mean p95-CT -3.626
+  - mc_score_A_stall_only (220621): mean SOC +0.536, mean median-CT +7.380, mean p95-CT +8.094
+  - mc_score_B_nonstall (215441): mean SOC +0.536, mean median-CT +1.520, mean p95-CT -10.006
+  - mc_score_B_stall_only (220909): mean SOC +0.536, mean median-CT +1.618, mean p95-CT +0.056
+- Stall-only conclusion:
+  - Stall-only gating materially improved runtime behavior for score set A while preserving SOC.
+  - Best observed setting in this round: stay=0.2, progress=0.8, regress=1.2 with `--mccg_score_stall_only`.
+  - This setting is promoted as profile alias `aggressive_4of5_mc_stallscore` (experimental).
+
 ### 64-mask findings (5 maps, 25 scenarios/map)
 
 - Best global mask tier by mean SOC gain: X34/X35/X36/X37 (~+0.4112%).
@@ -203,7 +221,8 @@
   - strict_5of5: mapaware_x35 (epsilon-greedy + w_balA)
   - aggressive_4of5: mapaware_x35_linucb_a08 (feature-expanded, 5/5 non-negative in latest validation)
   - aggressive_4of5_mc: rollout-enabled experimental mode
-- Next tuning target: improve rollout candidate scoring/selection itself (not just budget knobs) to recover raw MCCG SOC gains safely.
+  - aggressive_4of5_mc_stallscore: rollout + stall-only score-term gating (best runtime among MCCG variants so far)
+- Next tuning target: seek SOC lift beyond +0.536 while keeping the stallscore runtime advantage.
 
 Updated practical recommendation:
 - For robust deployment, prefer strict_5of5.

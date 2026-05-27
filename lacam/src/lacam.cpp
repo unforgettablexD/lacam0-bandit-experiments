@@ -20,6 +20,7 @@ double LaCAM::MCCG_SCORE_W_H = 1.0;
 double LaCAM::MCCG_SCORE_W_STAY = 0.0;
 double LaCAM::MCCG_SCORE_W_PROGRESS = 0.0;
 double LaCAM::MCCG_SCORE_W_REGRESS = 0.0;
+bool LaCAM::MCCG_SCORE_STALL_ONLY = false;
 std::string LaCAM::ORDER_BANDIT_MODE = "coarse3";
 std::string LaCAM::ORDER_AGENT_REWARD = "first_only";
 
@@ -495,7 +496,7 @@ Solution LaCAM::solve()
       rollout_budget = std::min(PIBT_ROLLOUTS, PIBT_ROLLOUTS_AFTER_GOAL);
     }
     if (use_hierarchy_with_pibt) PIBT::set_forced_pibt_arm(pibt_arm);
-    auto res = set_new_config(H, L, Q_to, rollout_budget);
+    auto res = set_new_config(H, L, Q_to, rollout_budget, stall_mode);
     if (use_hierarchy_with_pibt) PIBT::set_forced_pibt_arm(-1);
     delete L;
     if (!res) {
@@ -570,7 +571,8 @@ Solution LaCAM::solve()
   return solution;
 }
 
-bool LaCAM::set_new_config(HNode *H, LNode *L, Config &Q_to, int rollout_budget)
+bool LaCAM::set_new_config(HNode *H, LNode *L, Config &Q_to, int rollout_budget,
+                           bool stall_mode)
 {
   auto Q_base = Config(ins->N, nullptr);
   for (uint d = 0; d < L->depth; ++d) Q_base[L->who[d]] = L->where[d];
@@ -606,12 +608,20 @@ bool LaCAM::set_new_config(HNode *H, LNode *L, Config &Q_to, int rollout_budget)
       }
     }
 
+    const bool enable_score_terms =
+      !LaCAM::MCCG_SCORE_STALL_ONLY || stall_mode;
+    const double w_stay = enable_score_terms ? LaCAM::MCCG_SCORE_W_STAY : 0.0;
+    const double w_progress =
+      enable_score_terms ? LaCAM::MCCG_SCORE_W_PROGRESS : 0.0;
+    const double w_regress =
+      enable_score_terms ? LaCAM::MCCG_SCORE_W_REGRESS : 0.0;
+
     const auto cand_score =
         LaCAM::MCCG_SCORE_W_EDGE * static_cast<double>(edge_cost) +
         LaCAM::MCCG_SCORE_W_H * static_cast<double>(h_val) +
-        LaCAM::MCCG_SCORE_W_STAY * (static_cast<double>(stay_cnt) * inv_n) -
-        LaCAM::MCCG_SCORE_W_PROGRESS * (static_cast<double>(progress_cnt) * inv_n) +
-        LaCAM::MCCG_SCORE_W_REGRESS * (static_cast<double>(regress_cnt) * inv_n);
+      w_stay * (static_cast<double>(stay_cnt) * inv_n) -
+      w_progress * (static_cast<double>(progress_cnt) * inv_n) +
+      w_regress * (static_cast<double>(regress_cnt) * inv_n);
 
     if (!found) first_f = cand_f;
     if (!found || cand_f < best_f_seen) best_f_seen = cand_f;

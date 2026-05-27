@@ -36,6 +36,7 @@ MC_ROLLOUTS_EARLY_MARGIN=3
 MC_SCORE_W_STAY=0.0
 MC_SCORE_W_PROGRESS=0.0
 MC_SCORE_W_REGRESS=0.0
+MC_SCORE_STALL_ONLY=0
 
 usage() {
   cat <<EOF
@@ -45,13 +46,14 @@ Usage: $0 [options]
   --scenarios N
   --data-root PATH
   --run-id ID                  Resume/rebuild an existing run id
-  --profile NAME               strict_5of5 | aggressive_4of5 | aggressive_4of5_mc
+  --profile NAME               strict_5of5 | aggressive_4of5 | aggressive_4of5_mc | aggressive_4of5_mc_stallscore
   --mc-rollouts N              Override --pibt_rollouts for aggressive_4of5_mc
   --mc-after-goal N            Override --pibt_rollouts_after_goal for aggressive_4of5_mc
   --mc-early-margin N          Override --pibt_rollouts_early_margin for aggressive_4of5_mc
   --mc-score-stay X            Override --mccg_score_w_stay for aggressive_4of5_mc
   --mc-score-progress X        Override --mccg_score_w_progress for aggressive_4of5_mc
   --mc-score-regress X         Override --mccg_score_w_regress for aggressive_4of5_mc
+  --mc-score-stall-only        Pass --mccg_score_stall_only for aggressive_4of5_mc
 EOF
 }
 
@@ -69,6 +71,7 @@ while [[ $# -gt 0 ]]; do
     --mc-score-stay) MC_SCORE_W_STAY="$2"; shift 2 ;;
     --mc-score-progress) MC_SCORE_W_PROGRESS="$2"; shift 2 ;;
     --mc-score-regress) MC_SCORE_W_REGRESS="$2"; shift 2 ;;
+    --mc-score-stall-only) MC_SCORE_STALL_ONLY=1; shift 1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; usage; exit 1 ;;
   esac
@@ -182,7 +185,15 @@ mask35_w_balA_linucb_a08_args() {
 }
 
 mask35_w_balA_linucb_a08_mccg_args() {
-  echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy linucb --bandit_epsilon 0.08 --bandit_epsilon_final 0.08 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --pibt_rollouts $MC_ROLLOUTS --pibt_rollouts_after_goal $MC_ROLLOUTS_AFTER_GOAL --pibt_rollouts_early_margin $MC_ROLLOUTS_EARLY_MARGIN --mccg_score_w_stay $MC_SCORE_W_STAY --mccg_score_w_progress $MC_SCORE_W_PROGRESS --mccg_score_w_regress $MC_SCORE_W_REGRESS --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
+  local score_stall_only_arg=""
+  if [[ "$MC_SCORE_STALL_ONLY" -eq 1 ]]; then
+    score_stall_only_arg=" --mccg_score_stall_only"
+  fi
+  echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy linucb --bandit_epsilon 0.08 --bandit_epsilon_final 0.08 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --pibt_rollouts $MC_ROLLOUTS --pibt_rollouts_after_goal $MC_ROLLOUTS_AFTER_GOAL --pibt_rollouts_early_margin $MC_ROLLOUTS_EARLY_MARGIN --mccg_score_w_stay $MC_SCORE_W_STAY --mccg_score_w_progress $MC_SCORE_W_PROGRESS --mccg_score_w_regress $MC_SCORE_W_REGRESS$score_stall_only_arg --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
+}
+
+mask35_w_balA_linucb_a08_mccg_stallscore_args() {
+  echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy linucb --bandit_epsilon 0.08 --bandit_epsilon_final 0.08 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --pibt_rollouts 4 --pibt_rollouts_after_goal 2 --pibt_rollouts_early_margin 3 --mccg_score_w_stay 0.2 --mccg_score_w_progress 0.8 --mccg_score_w_regress 1.2 --mccg_score_stall_only --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
 }
 
 # Map-aware policy: baseline on Paris/den520d, X35 elsewhere
@@ -197,6 +208,7 @@ map_aware_args() {
         strict_5of5) mask35_w_balA_args ;;
         aggressive_4of5) mask35_w_balA_linucb_a08_args ;;
         aggressive_4of5_mc) mask35_w_balA_linucb_a08_mccg_args ;;
+        aggressive_4of5_mc_stallscore) mask35_w_balA_linucb_a08_mccg_stallscore_args ;;
         *) echo "Unknown --profile: $PROFILE" >&2; exit 1 ;;
       esac
       ;;
@@ -215,7 +227,7 @@ declare -a MAPS=(
   "warehouse-20-40-10-2-2.map warehouse-20-40-10-2-2-random 1000"
 )
 
-echo "[$(date '+%F %T')] run_id=$RUN_ID profile=$PROFILE parallel=$PARALLEL scenarios=$SCEN_COUNT time_limit=$TIME_LIMIT data_root=$DATA_ROOT mc_rollouts=$MC_ROLLOUTS mc_after_goal=$MC_ROLLOUTS_AFTER_GOAL mc_early_margin=$MC_ROLLOUTS_EARLY_MARGIN mc_score_stay=$MC_SCORE_W_STAY mc_score_progress=$MC_SCORE_W_PROGRESS mc_score_regress=$MC_SCORE_W_REGRESS"
+echo "[$(date '+%F %T')] run_id=$RUN_ID profile=$PROFILE parallel=$PARALLEL scenarios=$SCEN_COUNT time_limit=$TIME_LIMIT data_root=$DATA_ROOT mc_rollouts=$MC_ROLLOUTS mc_after_goal=$MC_ROLLOUTS_AFTER_GOAL mc_early_margin=$MC_ROLLOUTS_EARLY_MARGIN mc_score_stay=$MC_SCORE_W_STAY mc_score_progress=$MC_SCORE_W_PROGRESS mc_score_regress=$MC_SCORE_W_REGRESS mc_score_stall_only=$MC_SCORE_STALL_ONLY"
 
 for spec in "${MAPS[@]}"; do
   read -r map scenprefix agents <<< "$spec"

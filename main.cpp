@@ -118,6 +118,10 @@ int main(int argc, char *argv[])
       .help("MCCG candidate score weight for regress ratio penalty")
       .scan<'g', double>()
       .default_value(0.0);
+  program.add_argument("--mccg_score_stall_only")
+      .help("apply MCCG stay/progress/regress score terms only during stall expansions")
+      .default_value(false)
+      .implicit_value(true);
   program.add_argument("--reward_autoscale")
       .help("PIBT reward autoscale: off | zscore")
       .default_value(std::string("off"));
@@ -196,6 +200,8 @@ int main(int argc, char *argv[])
       program.get<double>("mccg_score_w_progress");
   const auto mccg_score_w_regress =
       program.get<double>("mccg_score_w_regress");
+  const auto mccg_score_stall_only =
+      program.get<bool>("mccg_score_stall_only");
   const auto reward_autoscale = program.get<std::string>("reward_autoscale");
   const auto reward_weight_learning =
       program.get<std::string>("reward_weight_learning");
@@ -225,6 +231,7 @@ int main(int argc, char *argv[])
   LaCAM::MCCG_SCORE_W_STAY = mccg_score_w_stay;
   LaCAM::MCCG_SCORE_W_PROGRESS = mccg_score_w_progress;
   LaCAM::MCCG_SCORE_W_REGRESS = mccg_score_w_regress;
+    LaCAM::MCCG_SCORE_STALL_ONLY = mccg_score_stall_only;
 
   // pibt
   PIBT::SWAP = !program.get<bool>("no_pibt_swap");
