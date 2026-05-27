@@ -109,6 +109,27 @@
   - MCCG is useful as an experimental high-SOC lever.
   - Adaptive MCCG neutralized most runtime damage but also neutralized extra SOC gain.
 
+### Focused adaptive MCCG re-tuning (same 5-map/25-scenario protocol)
+
+- Runner update: `run_focus5_map_aware_vs_baseline.sh` now accepts MC overrides:
+  - `--mc-rollouts`
+  - `--mc-after-goal`
+  - `--mc-early-margin`
+- Tested settings:
+  - Run ID: 20260526_213201, MC(3,1,2)
+  - Run ID: 20260526_213448, MC(3,0,2)
+  - Run ID: 20260526_213805, MC(4,0,1)
+- Aggregate comparison vs baseline (mean over 5 maps):
+  - standard_aggr (204631): mean SOC +0.536, mean median-CT +3.754, mean p95-CT +2.752
+  - mc_adaptive_4_2_3 (211539): mean SOC +0.536, mean median-CT +5.398, mean p95-CT +3.520
+  - mc_3_1_2 (213201): mean SOC +0.536, mean median-CT +3.212, mean p95-CT -5.358
+  - mc_3_0_2 (213448): mean SOC +0.536, mean median-CT +1.704, mean p95-CT -0.438
+  - mc_4_0_1 (213805): mean SOC +0.536, mean median-CT +2.648, mean p95-CT -3.604
+- Re-tuning conclusion:
+  - No tested adaptive setting improved SOC beyond +0.536.
+  - The new candidates generally hurt tail runtime relative to MC(4,2,3).
+  - Keep MC(4,2,3) as the only retained adaptive MCCG preset for now.
+
 ### 64-mask findings (5 maps, 25 scenarios/map)
 
 - Best global mask tier by mean SOC gain: X34/X35/X36/X37 (~+0.4112%).
@@ -150,7 +171,7 @@
   - strict_5of5: mapaware_x35 (epsilon-greedy + w_balA)
   - aggressive_4of5: mapaware_x35_linucb_a08 (feature-expanded, 5/5 non-negative in latest validation)
   - aggressive_4of5_mc: rollout-enabled experimental mode
-- Next tuning target: adaptive MCCG that retains part of raw MCCG SOC gain without runtime collapse.
+- Next tuning target: improve rollout candidate scoring/selection itself (not just budget knobs) to recover raw MCCG SOC gains safely.
 
 Updated practical recommendation:
 - For robust deployment, prefer strict_5of5.
