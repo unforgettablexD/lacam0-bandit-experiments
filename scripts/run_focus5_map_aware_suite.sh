@@ -191,6 +191,18 @@ args_for_cfg_and_map() {
         *) mask35_w_balA_linucb_a08_args ;;
       esac
       ;;
+    strict_5of5)
+      case "$map_name" in
+        Paris_1_256.map|den520d.map) baseline_args ;;
+        *) mask35_w_balA_args ;;
+      esac
+      ;;
+    aggressive_4of5)
+      case "$map_name" in
+        Paris_1_256.map|den520d.map) baseline_args ;;
+        *) mask35_w_balA_linucb_a08_args ;;
+      esac
+      ;;
     mapaware_x35_linucb_a10)
       case "$map_name" in
         Paris_1_256.map|den520d.map) baseline_args ;;
@@ -234,6 +246,8 @@ declare -a CONFIGS=(
   "mapaware_x35_linucb"
   "mapaware_x35_linucb_a06"
   "mapaware_x35_linucb_a08"
+  "strict_5of5"
+  "aggressive_4of5"
   "mapaware_x35_linucb_a10"
   "mapaware_x36"
   "mapaware_random_x35"

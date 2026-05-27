@@ -70,6 +70,23 @@
   - Non-negative maps: 4/5
   - Runtime tradeoff observed (median/p95 less favorable than strict 5/5 profile)
 
+### Feature-expanded contextual update (dual profile retention)
+
+- Expanded LinUCB context features in PIBT arm selection (distance shape, blockage ratio, near-goal flag).
+- Suite run ID: 20260526_203512_lacam0_focus5_map_aware_suite
+  - Best profile: mapaware_x35_linucb_a08
+  - Mean SOC gain: +0.54%
+  - Worst-map SOC gain: 0.00%
+  - Non-negative maps: 5/5
+- Confirmation run ID: 20260526_204631_lacam0_focus5_map_aware_vs_baseline
+  - Mean SOC gain: +0.536%
+  - Worst-map SOC gain: 0.00%
+  - Non-negative maps: 5/5
+
+- Operational naming kept in runners:
+  - strict_5of5: epsilon-greedy X35 + w_balA
+  - aggressive_4of5: LinUCB X35 + w_balA (a08)
+
 ### 64-mask findings (5 maps, 25 scenarios/map)
 
 - Best global mask tier by mean SOC gain: X34/X35/X36/X37 (~+0.4112%).
@@ -111,3 +128,7 @@
   - strict_5of5: mapaware_x35 (epsilon-greedy + w_balA)
   - soc_4of5: mapaware_x35_linucb_a08 (higher SOC, one slight negative map allowed)
 - Next tuning target: recover p95 runtime for soc_4of5 profile without losing its SOC gain.
+
+Updated practical recommendation:
+- For robust deployment, prefer strict_5of5.
+- For SOC-first experiments, use aggressive_4of5 and monitor runtime tails.

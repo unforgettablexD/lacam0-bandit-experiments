@@ -19,7 +19,7 @@ int PIBT::REGRET_TRIALS = 1;
 
 namespace {
 constexpr int BANDIT_ARM_COUNT = 3;
-constexpr int PIBT_CONTEXT_DIM = 5;
+constexpr int PIBT_CONTEXT_DIM = 8;
 std::array<int, BANDIT_ARM_COUNT> PIBT_ARM_PULLS = {0, 0, 0};
 std::array<double, BANDIT_ARM_COUNT> PIBT_ARM_REWARDS = {0.0, 0.0, 0.0};
 std::array<std::array<double, PIBT_CONTEXT_DIM>, BANDIT_ARM_COUNT>
@@ -371,16 +371,28 @@ bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
   }
 
   const int degree_now = static_cast<int>(Q_from[i]->neighbors.size());
+  int blocked_next = 0;
+  for (auto u : Q_from[i]->actions) {
+    if (is_expired(deadline)) return false;
+    if (occupied_next[u->id] != NO_AGENT) blocked_next += 1;
+  }
+  const int action_count = static_cast<int>(Q_from[i]->actions.size());
+  const double dist_norm = std::min(1.0, static_cast<double>(d_now) / 20.0);
   const double neighbor_occupancy_ratio =
       (degree_now > 0)
           ? (double)num_neighbor_agents / (double)degree_now
           : 0.0;
+  const double blocked_ratio =
+      (action_count > 0) ? (double)blocked_next / (double)action_count : 0.0;
   const std::array<double, PIBT_CONTEXT_DIM> arm_context = {
       1.0,
-      std::min(1.0, (double)d_now / 20.0),
+      dist_norm,
+      dist_norm * dist_norm,
       at_goal_now ? 1.0 : 0.0,
       neighbor_occupancy_ratio,
       (degree_now <= 2) ? 1.0 : 0.0,
+      blocked_ratio,
+      (!at_goal_now && d_now <= 2) ? 1.0 : 0.0,
   };
 
   const auto selected_arm = FORCE_PIBT_ARM

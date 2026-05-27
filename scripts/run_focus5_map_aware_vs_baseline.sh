@@ -29,6 +29,7 @@ RUN_ID="$(date +%Y%m%d_%H%M%S)_lacam0_focus5_map_aware_vs_baseline"
 RAW_CSV="$OUT_DIR/${RUN_ID}.csv"
 CHECKPOINT_DIR="$OUT_DIR/${RUN_ID}_checkpoints"
 RESUME_RUN_ID=""
+PROFILE="strict_5of5"
 
 usage() {
   cat <<EOF
@@ -38,6 +39,7 @@ Usage: $0 [options]
   --scenarios N
   --data-root PATH
   --run-id ID                  Resume/rebuild an existing run id
+  --profile NAME               strict_5of5 | aggressive_4of5
 EOF
 }
 
@@ -48,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     --scenarios) SCEN_COUNT="$2"; shift 2 ;;
     --data-root) DATA_ROOT="$2"; shift 2 ;;
     --run-id) RESUME_RUN_ID="$2"; shift 2 ;;
+    --profile) PROFILE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; usage; exit 1 ;;
   esac
@@ -141,6 +144,10 @@ baseline_args() {
 }
 
 mask35_w_balA_args() {
+  echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy epsilon_greedy --bandit_epsilon 0.05 --bandit_epsilon_final 0.05 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
+}
+
+mask35_w_balA_linucb_a08_args() {
   echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy linucb --bandit_epsilon 0.08 --bandit_epsilon_final 0.08 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
 }
 
@@ -152,7 +159,11 @@ map_aware_args() {
       baseline_args
       ;;
     *)
-      mask35_w_balA_args
+      case "$PROFILE" in
+        strict_5of5) mask35_w_balA_args ;;
+        aggressive_4of5) mask35_w_balA_linucb_a08_args ;;
+        *) echo "Unknown --profile: $PROFILE" >&2; exit 1 ;;
+      esac
       ;;
   esac
 }
@@ -169,7 +180,7 @@ declare -a MAPS=(
   "warehouse-20-40-10-2-2.map warehouse-20-40-10-2-2-random 1000"
 )
 
-echo "[$(date '+%F %T')] run_id=$RUN_ID parallel=$PARALLEL scenarios=$SCEN_COUNT time_limit=$TIME_LIMIT data_root=$DATA_ROOT"
+echo "[$(date '+%F %T')] run_id=$RUN_ID profile=$PROFILE parallel=$PARALLEL scenarios=$SCEN_COUNT time_limit=$TIME_LIMIT data_root=$DATA_ROOT"
 
 for spec in "${MAPS[@]}"; do
   read -r map scenprefix agents <<< "$spec"
