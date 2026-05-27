@@ -36,6 +36,7 @@ struct PIBT {
   const int N;  // number of agents
   const int V_size;
   DistTable *D;
+  const Deadline *deadline;
 
   // specific to PIBT
   const int NO_AGENT;
@@ -58,6 +59,8 @@ struct PIBT {
   static int BANDIT_EPSILON_DECAY_STEPS;
   static std::string REWARD_AUTOSCALE_MODE;   // off | zscore
   static std::string REWARD_WEIGHT_LEARNING;  // off | online_linear
+  static bool EVENTS_LOG_ENABLED;
+  static int REGRET_TRIALS;
 
   static void set_bandit_config(bool use_pibt_bandit,
                                 const std::string &bandit_policy,
@@ -66,9 +69,11 @@ struct PIBT {
                                 int bandit_epsilon_decay_steps);
   static void set_reward_config(const std::string &reward_autoscale_mode,
                                 const std::string &reward_weight_learning);
+  static void set_runtime_config(bool events_log_enabled, int regret_trials);
   static void set_forced_pibt_arm(int arm);  // arm<0 disables forcing
 
-  PIBT(const Instance *_ins, DistTable *_D, int seed = 0);
+  PIBT(const Instance *_ins, DistTable *_D, const Deadline *_deadline = nullptr,
+       int seed = 0);
   ~PIBT();
 
   bool set_new_config(const Config &Q_from, Config &Q_to,

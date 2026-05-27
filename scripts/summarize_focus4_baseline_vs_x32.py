@@ -26,6 +26,7 @@ def main():
         ("random-32-32-20.map", 300),
         ("den520d.map", 700),
         ("Paris_1_256.map", 1000),
+        ("warehouse-20-40-10-2-1.map", 1000),
         ("warehouse-20-40-10-2-2.map", 1000),
     ]
 

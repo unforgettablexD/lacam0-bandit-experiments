@@ -67,12 +67,13 @@ int main(int argc, char *argv[])
       .help("arm-pull count for epsilon linear decay (0 disables decay)")
       .scan<'d', int>()
       .default_value(0);
-  // compatibility flags (accepted for script parity; currently no-op in lacam0)
+    // high-level bandit toggles
   program.add_argument("--no_order_bandit").default_value(false).implicit_value(true);
   program.add_argument("--no_branch_bandit").default_value(false).implicit_value(true);
   program.add_argument("--no_scheduler_bandit").default_value(false).implicit_value(true);
   program.add_argument("--no_random_bandit").default_value(false).implicit_value(true);
   program.add_argument("--no_dist_bandit").default_value(false).implicit_value(true);
+    // compatibility flags (accepted for script parity)
   program.add_argument("--no_events_log").default_value(false).implicit_value(true);
   program.add_argument("--pibt_regret_trials").scan<'d', int>().default_value(1);
   program.add_argument("--bandit_hierarchy")
@@ -126,6 +127,8 @@ int main(int argc, char *argv[])
   const auto reward_autoscale = program.get<std::string>("reward_autoscale");
   const auto reward_weight_learning =
       program.get<std::string>("reward_weight_learning");
+  const auto no_events_log = program.get<bool>("no_events_log");
+  const auto pibt_regret_trials = program.get<int>("pibt_regret_trials");
   const auto ins = scen_name.size() > 0 ? Instance(scen_name, map_name, N)
                                         : Instance(map_name, N, seed);
   if (!ins.is_valid(1)) return 1;
@@ -140,6 +143,7 @@ int main(int argc, char *argv[])
   PIBT::set_bandit_config(!no_pibt_bandit, bandit_policy, bandit_epsilon,
                           bandit_epsilon_final, bandit_epsilon_decay_steps);
   PIBT::set_reward_config(reward_autoscale, reward_weight_learning);
+    PIBT::set_runtime_config(!no_events_log, pibt_regret_trials);
   LaCAM::set_bandit_config(!no_order_bandit, !no_branch_bandit,
                            !no_scheduler_bandit, !no_random_bandit,
                            bandit_hierarchy,

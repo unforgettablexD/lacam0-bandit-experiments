@@ -39,9 +39,9 @@ int pick_arm(std::array<int, BANDIT_ARM_COUNT> &pulls,
              std::mt19937 &rng)
 {
   if (!enabled) return 0;
-  for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
-    if (pulls[a] == 0) return a;
-  }
+  // Keep arm-0 as safe default at startup; forced exploration of arm-1/2 can
+  // destabilize search before any useful reward signal is observed.
+  if (pulls[0] == 0) return 0;
   const auto policy = LaCAM::BANDIT_POLICY;
   if (policy == "epsilon_greedy" || policy == "eps" || policy == "epsilon") {
     int total = 0;
@@ -59,7 +59,7 @@ int pick_arm(std::array<int, BANDIT_ARM_COUNT> &pulls,
     int best = 0;
     double best_mean = -1e18;
     for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
-      const auto mean = rewards[a] / pulls[a];
+      const auto mean = rewards[a] / std::max(1, pulls[a]);
       if (mean > best_mean) {
         best_mean = mean;
         best = a;
@@ -71,8 +71,9 @@ int pick_arm(std::array<int, BANDIT_ARM_COUNT> &pulls,
     int best = 0;
     double best_sample = -1e18;
     for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
-      const auto mean = rewards[a] / pulls[a];
-      const auto sigma = 1.0 / std::sqrt((double)pulls[a]);
+      const auto denom = std::max(1, pulls[a]);
+      const auto mean = rewards[a] / denom;
+      const auto sigma = 1.0 / std::sqrt((double)denom);
       std::normal_distribution<double> N(mean, sigma);
       const auto s = N(rng);
       if (s > best_sample) {
@@ -91,8 +92,10 @@ int pick_arm(std::array<int, BANDIT_ARM_COUNT> &pulls,
   int best = 0;
   double best_score = -1e18;
   for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
-    const auto mean = rewards[a] / pulls[a];
-    const auto bonus = std::sqrt(2.0 * std::log((double)total) / pulls[a]);
+    const auto denom = std::max(1, pulls[a]);
+    const auto mean = rewards[a] / denom;
+    const auto bonus = std::sqrt(2.0 * std::log((double)std::max(1, total)) /
+                                 (double)denom);
     const auto score = mean + bonus;
     if (score > best_score) {
       best_score = score;
@@ -209,7 +212,7 @@ LaCAM::LaCAM(const Instance *_ins, DistTable *_D, int _verbose,
       verbose(_verbose),
       order_agent_pulls(ins->N, 0),
       order_agent_rewards(ins->N, 0.0),
-      pibt(ins, D, seed),
+      pibt(ins, D, deadline, seed),
       H_goal(nullptr),
       OPEN(),
       loop_cnt(0)
@@ -231,15 +234,31 @@ Solution LaCAM::solve()
   OPEN.push_front(H_init);
   EXPLORED[H_init->Q] = H_init;
   GC_HNodes.push_back(H_init);
+  int best_h_seen = H_init->h;
+  int no_improve_iters = 0;
+  int restart_cooldown = 0;
+  constexpr int STALL_TRIGGER_ITERS = 300;
+  constexpr int STALL_RESTART_PERIOD = 80;
 
   // search loop
   solver_info(2, "search iteration begins");
   while (!OPEN.empty() && !is_expired(deadline)) {
     ++loop_cnt;
+    const bool stall_mode_pre = (no_improve_iters >= STALL_TRIGGER_ITERS);
 
-    const int sched_arm = pick_arm(SCHED_PULLS, SCHED_REWARDS, USE_SCHED_BANDIT, MT);
-    const int pibt_arm = USE_BANDIT_HIERARCHY ? pick_arm(PIBT_PULLS, PIBT_REWARDS, true, MT) : -1;
-    int hidx = (int)OPEN.size() - 1;  // default: DFS/LIFO
+    int sched_arm = pick_arm(SCHED_PULLS, SCHED_REWARDS, USE_SCHED_BANDIT, MT);
+    // Safety: before the first feasible goal node is found, keep original
+    // extraction behavior. Exploring scheduler alternatives too early can stall
+    // search on hard instances.
+    if (H_goal == nullptr) sched_arm = 0;
+    if (stall_mode_pre) sched_arm = 0;
+    const bool use_hierarchy_with_pibt =
+      USE_BANDIT_HIERARCHY && PIBT::USE_PIBT_BANDIT;
+    const int pibt_arm = use_hierarchy_with_pibt
+                 ? pick_arm(PIBT_PULLS, PIBT_REWARDS, true, MT)
+                 : -1;
+    // Default must preserve original LaCAM behavior: take OPEN.front() (LIFO/DFS).
+    int hidx = 0;
     if (sched_arm == 1) {
       int best_idx = hidx;
       int best_score = INT_MAX;
@@ -280,11 +299,26 @@ Solution LaCAM::solve()
 
     // do not pop here!
     auto H = OPEN[hidx];  // high-level node
+    if (H->h < best_h_seen) {
+      best_h_seen = H->h;
+      no_improve_iters = 0;
+      restart_cooldown = 0;
+    } else {
+      no_improve_iters += 1;
+      if (restart_cooldown > 0) restart_cooldown -= 1;
+    }
+    const bool stall_mode = (no_improve_iters >= STALL_TRIGGER_ITERS);
+    if (stall_mode && H_goal == nullptr && restart_cooldown == 0) {
+      OPEN.push_front(H_init);
+      restart_cooldown = STALL_RESTART_PERIOD;
+    }
 
     // check upper bounds
     if (H_goal != nullptr && H->f >= H_goal->g) {
       OPEN.erase(OPEN.begin() + hidx);
-      update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm, squash_reward(-0.3));
+      if (USE_SCHED_BANDIT)
+        update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm,
+                   squash_reward(-0.3 + (stall_mode && sched_arm != 0 ? -0.15 : 0.0)));
       solver_info(5, "prune, g=", H->g, " >= ", H_goal->g);
       OPEN.push_front(H_init);
       continue;
@@ -301,7 +335,9 @@ Solution LaCAM::solve()
     // extract constraints
     if (H->search_tree.empty()) {
       OPEN.erase(OPEN.begin() + hidx);
-      update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm, squash_reward(-0.2));
+      if (USE_SCHED_BANDIT)
+        update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm,
+                   squash_reward(-0.2 + (stall_mode && sched_arm != 0 ? -0.10 : 0.0)));
       continue;
     }
     auto L = H->search_tree.front();
@@ -329,11 +365,12 @@ Solution LaCAM::solve()
         order.clear();
         for (const auto &p : sampled) order.push_back(p.second);
       } else {
-        if (USE_BANDIT_HIERARCHY) {
+        if (use_hierarchy_with_pibt) {
           order_arm = pick_arm(ORDER_PULLS_C[pibt_arm], ORDER_REWARDS_C[pibt_arm], USE_ORDER_BANDIT, MT);
         } else {
           order_arm = pick_arm(ORDER_PULLS, ORDER_REWARDS, USE_ORDER_BANDIT, MT);
         }
+        if (stall_mode) order_arm = 0;
         if (order_arm == 1) {
           std::reverse(order.begin(), order.end());
         } else if (order_arm == 2) {
@@ -345,17 +382,20 @@ Solution LaCAM::solve()
       auto C = H->Q[i]->actions;
 
       int rand_arm = pick_arm(RAND_PULLS, RAND_REWARDS, USE_RANDOM_BANDIT, MT);
+      if (stall_mode) rand_arm = 0;
       double p_shuffle = 0.1;
       if (rand_arm == 1) p_shuffle = 0.5;
       if (rand_arm == 2) p_shuffle = 0.9;
+      if (stall_mode) p_shuffle = 0.0;
       if (rrd(MT) < p_shuffle) std::shuffle(C.begin(), C.end(), MT);
 
       int branch_arm = 0;
-      if (USE_BANDIT_HIERARCHY) {
+      if (use_hierarchy_with_pibt) {
         branch_arm = pick_arm(BRANCH_PULLS_C[pibt_arm][order_arm], BRANCH_REWARDS_C[pibt_arm][order_arm], USE_BRANCH_BANDIT, MT);
       } else {
         branch_arm = pick_arm(BRANCH_PULLS, BRANCH_REWARDS, USE_BRANCH_BANDIT, MT);
       }
+      if (stall_mode) branch_arm = 1;
       if (branch_arm == 1) {
         std::sort(C.begin(), C.end(),
                   [&](const Vertex *a, const Vertex *b) { return D->get(i, a) < D->get(i, b); });
@@ -378,6 +418,13 @@ Solution LaCAM::solve()
         order_reward = (d0 > 0) ? 0.2 : 0.0;
         if (order_arm == 0) order_reward += 0.1;
       }
+      if (stall_mode) {
+        if (order_arm == 0) {
+          order_reward += 0.05;
+        } else {
+          order_reward -= 0.15;
+        }
+      }
       if (ORDER_BANDIT_MODE == "agent_level") {
         if (!order.empty()) {
           if (ORDER_AGENT_REWARD == "topk") {
@@ -393,36 +440,46 @@ Solution LaCAM::solve()
             order_agent_rewards[aid] += order_reward;
           }
         }
-      } else if (USE_BANDIT_HIERARCHY) {
+      } else if (use_hierarchy_with_pibt) {
         update_arm(ORDER_PULLS_C[pibt_arm], ORDER_REWARDS_C[pibt_arm], order_arm, squash_reward(order_reward));
-      } else {
+      } else if (USE_ORDER_BANDIT) {
         update_arm(ORDER_PULLS, ORDER_REWARDS, order_arm, squash_reward(order_reward));
       }
 
-      if (USE_BANDIT_HIERARCHY) {
+      if (use_hierarchy_with_pibt) {
+        double branch_reward = (branch_arm == 1 ? 0.15 : (branch_arm == 2 ? 0.1 : 0.05));
+        if (stall_mode && branch_arm != 1) branch_reward -= 0.2;
         update_arm(BRANCH_PULLS_C[pibt_arm][order_arm], BRANCH_REWARDS_C[pibt_arm][order_arm], branch_arm,
-                   squash_reward(branch_arm == 1 ? 0.15 : (branch_arm == 2 ? 0.1 : 0.05)));
-      } else {
+                   squash_reward(branch_reward));
+      } else if (USE_BRANCH_BANDIT) {
+        double branch_reward = (branch_arm == 1 ? 0.15 : (branch_arm == 2 ? 0.1 : 0.05));
+        if (stall_mode && branch_arm != 1) branch_reward -= 0.2;
         update_arm(BRANCH_PULLS, BRANCH_REWARDS, branch_arm,
-                   squash_reward(branch_arm == 1 ? 0.15 : (branch_arm == 2 ? 0.1 : 0.05)));
+                   squash_reward(branch_reward));
       }
-      update_arm(RAND_PULLS, RAND_REWARDS, rand_arm,
-                 squash_reward(0.1 + 0.1 * (1.0 - p_shuffle)));
+      if (USE_RANDOM_BANDIT) {
+        double random_reward = 0.1 + 0.1 * (1.0 - p_shuffle);
+        if (stall_mode && rand_arm != 0) random_reward -= 0.25;
+        update_arm(RAND_PULLS, RAND_REWARDS, rand_arm,
+                   squash_reward(random_reward));
+      }
 
       for (auto u : C) H->search_tree.push(new LNode(L, i, u));
     }
 
     // create successors at the high-level search
     auto Q_to = Config(ins->N, nullptr);
-    if (USE_BANDIT_HIERARCHY) PIBT::set_forced_pibt_arm(pibt_arm);
+    if (use_hierarchy_with_pibt) PIBT::set_forced_pibt_arm(pibt_arm);
     auto res = set_new_config(H, L, Q_to);
-    if (USE_BANDIT_HIERARCHY) PIBT::set_forced_pibt_arm(-1);
+    if (use_hierarchy_with_pibt) PIBT::set_forced_pibt_arm(-1);
     delete L;
     if (!res) {
-      if (USE_BANDIT_HIERARCHY) update_arm(PIBT_PULLS, PIBT_REWARDS, pibt_arm, squash_reward(-0.8));
+      if (use_hierarchy_with_pibt)
+        update_arm(PIBT_PULLS, PIBT_REWARDS, pibt_arm, squash_reward(-0.8));
       continue;
     }
-    if (USE_BANDIT_HIERARCHY) update_arm(PIBT_PULLS, PIBT_REWARDS, pibt_arm, squash_reward(0.4));
+    if (use_hierarchy_with_pibt)
+      update_arm(PIBT_PULLS, PIBT_REWARDS, pibt_arm, squash_reward(0.4));
 
     // check explored list
     auto iter = EXPLORED.find(Q_to);
@@ -434,7 +491,9 @@ Solution LaCAM::solve()
       OPEN.push_front(H_new);
       EXPLORED[H_new->Q] = H_new;
       GC_HNodes.push_back(H_new);
-      update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm, squash_reward(0.4));
+      if (USE_SCHED_BANDIT)
+        update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm,
+                   squash_reward(0.4 + (stall_mode && sched_arm == 0 ? 0.05 : 0.0)));
     } else {
       // known configuration
       auto H_known = iter->second;
@@ -446,7 +505,9 @@ Solution LaCAM::solve()
         solver_info(3, "random restart");
         OPEN.push_front(H_init);  // sometimes
       }
-      update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm, squash_reward(-0.1));
+      if (USE_SCHED_BANDIT)
+        update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm,
+                   squash_reward(-0.1 + (stall_mode && sched_arm != 0 ? -0.10 : 0.0)));
     }
   }
 

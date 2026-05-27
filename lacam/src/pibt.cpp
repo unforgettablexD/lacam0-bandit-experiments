@@ -1,5 +1,7 @@
 #include "../include/pibt.hpp"
 
+#include <filesystem>
+
 bool PIBT::SWAP = true;
 bool PIBT::HINDRANCE = true;
 bool PIBT::USE_PIBT_BANDIT = true;
@@ -12,11 +14,43 @@ double PIBT::BANDIT_EPSILON_FINAL = 0.10;
 int PIBT::BANDIT_EPSILON_DECAY_STEPS = 0;
 std::string PIBT::REWARD_AUTOSCALE_MODE = "off";
 std::string PIBT::REWARD_WEIGHT_LEARNING = "off";
+bool PIBT::EVENTS_LOG_ENABLED = true;
+int PIBT::REGRET_TRIALS = 1;
 
 namespace {
 constexpr int BANDIT_ARM_COUNT = 3;
 std::array<int, BANDIT_ARM_COUNT> PIBT_ARM_PULLS = {0, 0, 0};
 std::array<double, BANDIT_ARM_COUNT> PIBT_ARM_REWARDS = {0.0, 0.0, 0.0};
+std::ofstream PIBT_EVENTS_LOG;
+bool PIBT_EVENTS_LOG_READY = false;
+long long PIBT_EVENT_SEQ = 0;
+
+void log_pibt_event(const int arm, const double reward)
+{
+  if (!PIBT::EVENTS_LOG_ENABLED) return;
+
+  const std::string path = "./build/events.csv";
+  if (!PIBT_EVENTS_LOG_READY) {
+    const bool write_header = !std::filesystem::exists(path) ||
+                              std::filesystem::file_size(path) == 0;
+    PIBT_EVENTS_LOG.open(path, std::ios::out | std::ios::app);
+    if (!PIBT_EVENTS_LOG.is_open()) return;
+    if (write_header) {
+      PIBT_EVENTS_LOG
+          << "seq,module,arm,reward,pulls0,pulls1,pulls2,rewards0,rewards1,rewards2,policy,use_bandit,regret_trials\n";
+    }
+    PIBT_EVENTS_LOG_READY = true;
+  }
+
+  ++PIBT_EVENT_SEQ;
+  PIBT_EVENTS_LOG << PIBT_EVENT_SEQ << ",pibt," << arm << "," << reward
+                  << "," << PIBT_ARM_PULLS[0] << "," << PIBT_ARM_PULLS[1]
+                  << "," << PIBT_ARM_PULLS[2] << "," << PIBT_ARM_REWARDS[0]
+                  << "," << PIBT_ARM_REWARDS[1] << "," << PIBT_ARM_REWARDS[2]
+                  << "," << PIBT::BANDIT_POLICY << ","
+                  << (PIBT::USE_PIBT_BANDIT ? 1 : 0) << ","
+                  << PIBT::REGRET_TRIALS << "\n";
+}
 
 struct RunningStat {
   int n = 0;
@@ -35,8 +69,9 @@ struct RunningStat {
     return (x - mean) / s;
   }
 };
-RunningStat ST_GOAL, ST_DELAY, ST_STAY, ST_LEAVE, ST_OCC;
-double W_GOAL = 1.0, W_DELAY = 1.0, W_STAY = 1.0, W_LEAVE = 1.0, W_OCC = 1.0;
+RunningStat ST_GOAL, ST_DELAY, ST_STAY, ST_LEAVE, ST_OCC, ST_CONG, ST_NOPROG;
+double W_GOAL = 1.0, W_DELAY = 1.0, W_STAY = 1.0, W_LEAVE = 1.0, W_OCC = 1.0,
+       W_CONG = 1.0, W_NOPROG = 1.0;
 
 double squash_reward(const double raw_reward) { return std::tanh(raw_reward); }
 
@@ -113,8 +148,10 @@ int pick_arm(std::mt19937 &rng)
 
 void update_arm(const int arm, const double reward)
 {
+  if (!PIBT::USE_PIBT_BANDIT) return;
   PIBT_ARM_PULLS[arm] += 1;
   PIBT_ARM_REWARDS[arm] += reward;
+  log_pibt_event(arm, reward);
 }
 }  // namespace
 
@@ -149,13 +186,26 @@ void PIBT::set_reward_config(const std::string &reward_autoscale_mode,
       reward_weight_learning.empty() ? "off" : reward_weight_learning;
 }
 
-PIBT::PIBT(const Instance *_ins, DistTable *_D, int seed)
+void PIBT::set_runtime_config(bool events_log_enabled, int regret_trials)
+{
+  EVENTS_LOG_ENABLED = events_log_enabled;
+  REGRET_TRIALS = std::max(1, regret_trials);
+
+  if (!EVENTS_LOG_ENABLED && PIBT_EVENTS_LOG.is_open()) {
+    PIBT_EVENTS_LOG.close();
+    PIBT_EVENTS_LOG_READY = false;
+  }
+}
+
+PIBT::PIBT(const Instance *_ins, DistTable *_D, const Deadline *_deadline,
+           int seed)
     : ins(_ins),
       MT(seed),
       rrd(0, 1),
       N(ins->N),
       V_size(ins->G.size()),
       D(_D),
+      deadline(_deadline),
       NO_AGENT(N),
       occupied_now(V_size, NO_AGENT),
       occupied_next(V_size, NO_AGENT),
@@ -169,9 +219,11 @@ PIBT::~PIBT() {}
 bool PIBT::set_new_config(const Config &Q_from, Config &Q_to,
                           const std::vector<int> &order)
 {
+  if (is_expired(deadline)) return false;
   bool success = true;
   // setup cache & constraints check
   for (auto i = 0; i < N; ++i) {
+    if (is_expired(deadline)) return false;
     // set occupied now
     occupied_now[Q_from[i]->id] = i;
 
@@ -194,6 +246,7 @@ bool PIBT::set_new_config(const Config &Q_from, Config &Q_to,
 
   if (success) {
     for (auto i : order) {
+      if (is_expired(deadline)) return false;
       if (Q_to[i] == nullptr && !funcPIBT(i, Q_from, Q_to)) {
         success = false;
         break;
@@ -212,6 +265,7 @@ bool PIBT::set_new_config(const Config &Q_from, Config &Q_to,
 
 bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
 {
+  if (is_expired(deadline)) return false;
   const auto K = Q_from[i]->neighbors.size();
   const auto selected_arm = FORCE_PIBT_ARM ? FORCED_PIBT_ARM : pick_arm(MT);
   LAST_PIBT_ARM = selected_arm;
@@ -223,6 +277,7 @@ bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
   static std::array<int, 4> neighbor_agents;
   if (HINDRANCE) {
     for (auto u : Q_from[i]->neighbors) {
+      if (is_expired(deadline)) return false;
       if (occupied_now[u->id] != NO_AGENT) {
         neighbor_agents[num_neighbor_agents] = occupied_now[u->id];
         ++num_neighbor_agents;
@@ -231,25 +286,64 @@ bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
   }
 
   auto get_successor_cost = [&](Vertex *u, int mode, bool swap = false) {
+    if (is_expired(deadline)) return std::make_tuple(INT_MAX / 4, INT_MAX / 4, 1.0f);
     auto e = rrd(MT);
     if (swap) return std::make_tuple(-D->get(i, u), 0, e);
 
     int hindrance = 0;
     if (HINDRANCE) {
       for (auto k = 0; k < num_neighbor_agents; ++k) {
+        if (is_expired(deadline)) return std::make_tuple(INT_MAX / 4, INT_MAX / 4, 1.0f);
         auto &&j = neighbor_agents[k];
         if (Q_from[j] != u && D->get(j, u) < D->get(j, Q_from[j])) {
           hindrance += 1;
         }
       }
     }
-    int regret = 0;
-    for (auto nb : u->neighbors) {
-      const auto j = occupied_now[nb->id];
-      if (j != NO_AGENT && j != i) {
-        if (D->get(j, u) < D->get(j, Q_from[j])) regret += 1;
+    auto regret_from_neighbors = [&]() {
+      int value = 0;
+      for (auto nb : u->neighbors) {
+        if (is_expired(deadline)) return INT_MAX / 8;
+        const auto j = occupied_now[nb->id];
+        if (j != NO_AGENT && j != i && D->get(j, u) < D->get(j, Q_from[j])) {
+          value += 1;
+        }
       }
+      return value;
+    };
+
+    int regret = 0;
+    if (mode == 2 && REGRET_TRIALS > 1) {
+      std::vector<int> candidates;
+      candidates.reserve(u->neighbors.size());
+      for (auto nb : u->neighbors) {
+        if (is_expired(deadline)) return std::make_tuple(INT_MAX / 4, INT_MAX / 4, 1.0f);
+        const auto j = occupied_now[nb->id];
+        if (j != NO_AGENT && j != i) candidates.push_back(j);
+      }
+
+      if (candidates.empty()) {
+        regret = 0;
+      } else {
+        std::uniform_int_distribution<int> pick_idx(0, (int)candidates.size() - 1);
+        const int sample_count = (int)candidates.size();
+        double acc = 0.0;
+        for (int t = 0; t < REGRET_TRIALS; ++t) {
+          int trial_regret = 0;
+          for (int s = 0; s < sample_count; ++s) {
+            if (is_expired(deadline)) return std::make_tuple(INT_MAX / 4, INT_MAX / 4, 1.0f);
+            const int j = candidates[pick_idx(MT)];
+            if (D->get(j, u) < D->get(j, Q_from[j])) trial_regret += 1;
+          }
+          acc += trial_regret;
+        }
+        regret = (int)std::lround(acc / std::max(1, REGRET_TRIALS));
+      }
+    } else {
+      regret = regret_from_neighbors();
+      if (regret >= INT_MAX / 16) return std::make_tuple(INT_MAX / 4, INT_MAX / 4, 1.0f);
     }
+
     if (mode == 0) return std::make_tuple(D->get(i, u), hindrance, e);
     if (mode == 1) return std::make_tuple(D->get(i, u), hindrance + 1, e);
     return std::make_tuple(D->get(i, u), hindrance + regret + 1, e);
@@ -257,6 +351,7 @@ bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
 
   // set C_next
   for (size_t k = 0; k <= K; ++k) {
+    if (is_expired(deadline)) return false;
     auto u = Q_from[i]->actions[k];
     C_next[i][k] = u;
     C_cost[k] = get_successor_cost(u, selected_arm);
@@ -291,6 +386,7 @@ bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
 
   // main loop
   for (size_t k = 0; k < K + 1; ++k) {
+    if (is_expired(deadline)) return false;
     auto u_idx = C_indices[i][k];
     auto u = C_next[i][u_idx];
 
@@ -314,21 +410,34 @@ bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
     const double stay_penalty = (!at_goal_now && stay_move) ? 0.25 : 0.0;
     const double leave_goal_penalty = (at_goal_now && !at_goal_next) ? 1.5 : 0.0;
     const double occupancy_penalty = (j != NO_AGENT && !stay_move) ? 0.20 : 0.0;
+    int local_congestion = 0;
+    for (auto nb : u->neighbors) {
+      if (is_expired(deadline)) return false;
+      const auto nb_agent = occupied_now[nb->id];
+      if (nb_agent != NO_AGENT && nb_agent != i) local_congestion += 1;
+    }
+    const double congestion_penalty = 0.08 * static_cast<double>(local_congestion);
+    const double no_progress_penalty = (!at_goal_now && d_next >= d_now) ? 0.15 : 0.0;
     const double goal_bonus = (!at_goal_now && at_goal_next) ? 0.50 : 0.0;
     ST_GOAL.update(goal_bonus);
     ST_DELAY.update(delay_penalty);
     ST_STAY.update(stay_penalty);
     ST_LEAVE.update(leave_goal_penalty);
     ST_OCC.update(occupancy_penalty);
+    ST_CONG.update(congestion_penalty);
+    ST_NOPROG.update(no_progress_penalty);
     const bool zscore = (REWARD_AUTOSCALE_MODE == "zscore");
     const double goal_term = zscore ? ST_GOAL.z(goal_bonus) : goal_bonus;
     const double delay_term = zscore ? ST_DELAY.z(delay_penalty) : delay_penalty;
     const double stay_term = zscore ? ST_STAY.z(stay_penalty) : stay_penalty;
     const double leave_term = zscore ? ST_LEAVE.z(leave_goal_penalty) : leave_goal_penalty;
     const double occ_term = zscore ? ST_OCC.z(occupancy_penalty) : occupancy_penalty;
+    const double cong_term = zscore ? ST_CONG.z(congestion_penalty) : congestion_penalty;
+    const double noprogress_term = zscore ? ST_NOPROG.z(no_progress_penalty) : no_progress_penalty;
     const double raw_reward =
         W_GOAL * goal_term - W_DELAY * delay_term - W_STAY * stay_term -
-        W_LEAVE * leave_term - W_OCC * occ_term;
+      W_LEAVE * leave_term - W_OCC * occ_term - W_CONG * cong_term -
+      W_NOPROG * noprogress_term;
     const double immediate_reward = squash_reward(raw_reward);
 
     if (REWARD_WEIGHT_LEARNING == "online_linear") {
@@ -341,6 +450,9 @@ bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
       W_STAY = std::max(0.0, std::min(3.0, W_STAY - lr * err * stay_term));
       W_LEAVE = std::max(0.0, std::min(3.0, W_LEAVE - lr * err * leave_term));
       W_OCC = std::max(0.0, std::min(3.0, W_OCC - lr * err * occ_term));
+      W_CONG = std::max(0.0, std::min(3.0, W_CONG - lr * err * cong_term));
+      W_NOPROG =
+          std::max(0.0, std::min(3.0, W_NOPROG - lr * err * noprogress_term));
     }
 
     // priority inheritance
@@ -400,6 +512,7 @@ bool PIBT::is_swap_required(const int pusher, const int puller,
   auto v_puller = v_puller_origin;
   Vertex *tmp = nullptr;
   while (D->get(pusher, v_puller) < D->get(pusher, v_pusher)) {
+    if (is_expired(deadline)) return false;
     auto n = v_puller->neighbors.size();
     // remove agents who need not to move
     for (auto u : v_puller->neighbors) {
@@ -429,6 +542,7 @@ bool PIBT::is_swap_possible(Vertex *v_pusher_origin, Vertex *v_puller_origin)
   auto v_puller = v_puller_origin;
   Vertex *tmp = nullptr;
   while (v_puller != v_pusher_origin) {  // avoid loop
+    if (is_expired(deadline)) return false;
     auto n = v_puller->neighbors.size();
     for (auto u : v_puller->neighbors) {
       const auto i = occupied_now[u->id];

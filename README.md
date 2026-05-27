@@ -67,9 +67,9 @@ Additional bandit toggles:
 - `--reward_autoscale off|zscore`
 - `--reward_weight_learning off|online_linear`
 
-Other compatibility flags:
-- `--no_events_log`
-- `--pibt_regret_trials <int>`
+Additional PIBT runtime controls:
+- `--no_events_log` (disable writing PIBT arm events to `build/events.csv`)
+- `--pibt_regret_trials <int>` (number of Monte Carlo trials for regret term estimation, min 1)
 
 ### Focus-4 baseline vs Thompson+X32 runner
 
@@ -95,9 +95,22 @@ Outputs:
 - ranked Markdown summary
 
 Notes:
-- By default this script reads MovingAI files from
-  `../lacam/benchmarks/movingai/data_all` (your existing data location).
+- By default this script reads MovingAI files from:
+  1. `./benchmarks/movingai/data_all` (preferred, local to `lacam0`)
+  2. fallback: `../lacam/benchmarks/movingai/data_all`
 - Outputs are written to `reports/movingai/`.
+
+Bootstrap local focus4 data into `lacam0`:
+
+```sh
+./scripts/bootstrap_focus4_data.sh
+```
+
+Optional explicit source:
+
+```sh
+./scripts/bootstrap_focus4_data.sh "/path/to/data_all"
+```
 
 ## Visualizer
 

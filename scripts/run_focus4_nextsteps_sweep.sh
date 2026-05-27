@@ -13,7 +13,15 @@ else
 fi
 
 TIME_LIMIT=60
-DATA_ROOT="${DATA_ROOT:-$ROOT_DIR/../lacam/benchmarks/movingai/data_all}"
+LOCAL_DATA_ROOT="$ROOT_DIR/benchmarks/movingai/data_all"
+LEGACY_DATA_ROOT="$ROOT_DIR/../lacam/benchmarks/movingai/data_all"
+if [[ -z "${DATA_ROOT:-}" ]]; then
+  if [[ -d "$LOCAL_DATA_ROOT" ]]; then
+    DATA_ROOT="$LOCAL_DATA_ROOT"
+  else
+    DATA_ROOT="$LEGACY_DATA_ROOT"
+  fi
+fi
 RUN_ID="$(date +%Y%m%d_%H%M%S)_lacam0_focus4_nextsteps_sweep"
 RAW_CSV="$OUT_DIR/${RUN_ID}.csv"
 MAPWISE_CSV="$OUT_DIR/${RUN_ID}_mapwise.csv"
@@ -87,6 +95,7 @@ declare -a MAPS=(
   "random-32-32-20.map random-32-32-20-random 300"
   "den520d.map den520d-random 700"
   "Paris_1_256.map Paris_1_256-random 1000"
+  "warehouse-20-40-10-2-1.map warehouse-20-40-10-2-1-random 1000"
   "warehouse-20-40-10-2-2.map warehouse-20-40-10-2-2-random 1000"
 )
 
@@ -131,7 +140,9 @@ done
 # Rebuild raw CSV from checkpoints every run/resume
 {
   echo "variant,config,map,scen,agents,solved,soc,makespan,sum_of_loss,comp_time"
-  find "$CHECKPOINT_DIR" -type f -name '*.csvline' | sort | xargs -r cat
+  find "$CHECKPOINT_DIR" -type f -name '*.csvline' -print0 \
+    | sort -z \
+    | xargs -0 -r cat
 } > "$RAW_CSV"
 
 python3 - << 'PY' "$RAW_CSV" "$MAPWISE_CSV" "$SUMMARY_MD"

@@ -90,6 +90,7 @@ int pick_dist_arm()
 
 void update_dist_arm(const int arm, const double reward)
 {
+  if (!DistTable::USE_DIST_BANDIT) return;
   DIST_PULLS[arm] += 1;
   DIST_REWARDS[arm] += reward;
 }
