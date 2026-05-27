@@ -37,6 +37,7 @@ MC_SCORE_W_STAY=0.0
 MC_SCORE_W_PROGRESS=0.0
 MC_SCORE_W_REGRESS=0.0
 MC_SCORE_STALL_ONLY=0
+MC_EXTRA_ARGS=""
 
 usage() {
   cat <<EOF
@@ -46,7 +47,7 @@ Usage: $0 [options]
   --scenarios N
   --data-root PATH
   --run-id ID                  Resume/rebuild an existing run id
-  --profile NAME               strict_5of5 | aggressive_4of5 | aggressive_4of5_mc | aggressive_4of5_mc_stallscore
+  --profile NAME               strict_5of5 | aggressive_4of5 | aggressive_4of5_mc | aggressive_4of5_mc_stallscore | aggressive_4of5_mc_twostage | aggressive_4of5_mc_diverse | aggressive_4of5_mc_conddeep | aggressive_4of5_mc_beam | aggressive_4of5_mc_socreward | aggressive_4of5_mc_phase | aggressive_4of5_mc_all6 | aggressive_4of5_mc_delayed
   --mc-rollouts N              Override --pibt_rollouts for aggressive_4of5_mc
   --mc-after-goal N            Override --pibt_rollouts_after_goal for aggressive_4of5_mc
   --mc-early-margin N          Override --pibt_rollouts_early_margin for aggressive_4of5_mc
@@ -54,6 +55,7 @@ Usage: $0 [options]
   --mc-score-progress X        Override --mccg_score_w_progress for aggressive_4of5_mc
   --mc-score-regress X         Override --mccg_score_w_regress for aggressive_4of5_mc
   --mc-score-stall-only        Pass --mccg_score_stall_only for aggressive_4of5_mc
+  --mc-extra-args "ARGS"       Extra args appended to aggressive_4of5_mc command
 EOF
 }
 
@@ -72,6 +74,7 @@ while [[ $# -gt 0 ]]; do
     --mc-score-progress) MC_SCORE_W_PROGRESS="$2"; shift 2 ;;
     --mc-score-regress) MC_SCORE_W_REGRESS="$2"; shift 2 ;;
     --mc-score-stall-only) MC_SCORE_STALL_ONLY=1; shift 1 ;;
+    --mc-extra-args) MC_EXTRA_ARGS="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; usage; exit 1 ;;
   esac
@@ -189,11 +192,43 @@ mask35_w_balA_linucb_a08_mccg_args() {
   if [[ "$MC_SCORE_STALL_ONLY" -eq 1 ]]; then
     score_stall_only_arg=" --mccg_score_stall_only"
   fi
-  echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy linucb --bandit_epsilon 0.08 --bandit_epsilon_final 0.08 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --pibt_rollouts $MC_ROLLOUTS --pibt_rollouts_after_goal $MC_ROLLOUTS_AFTER_GOAL --pibt_rollouts_early_margin $MC_ROLLOUTS_EARLY_MARGIN --mccg_score_w_stay $MC_SCORE_W_STAY --mccg_score_w_progress $MC_SCORE_W_PROGRESS --mccg_score_w_regress $MC_SCORE_W_REGRESS$score_stall_only_arg --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
+  echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy linucb --bandit_epsilon 0.08 --bandit_epsilon_final 0.08 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --pibt_rollouts $MC_ROLLOUTS --pibt_rollouts_after_goal $MC_ROLLOUTS_AFTER_GOAL --pibt_rollouts_early_margin $MC_ROLLOUTS_EARLY_MARGIN --mccg_score_w_stay $MC_SCORE_W_STAY --mccg_score_w_progress $MC_SCORE_W_PROGRESS --mccg_score_w_regress $MC_SCORE_W_REGRESS$score_stall_only_arg $MC_EXTRA_ARGS --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
 }
 
 mask35_w_balA_linucb_a08_mccg_stallscore_args() {
   echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy linucb --bandit_epsilon 0.08 --bandit_epsilon_final 0.08 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --pibt_rollouts 4 --pibt_rollouts_after_goal 2 --pibt_rollouts_early_margin 3 --mccg_score_w_stay 0.2 --mccg_score_w_progress 0.8 --mccg_score_w_regress 1.2 --mccg_score_stall_only --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
+}
+
+mask35_w_balA_linucb_a08_mccg_twostage_args() {
+  echo "$(mask35_w_balA_linucb_a08_mccg_args) --mccg_two_stage_progress"
+}
+
+mask35_w_balA_linucb_a08_mccg_diverse_args() {
+  echo "$(mask35_w_balA_linucb_a08_mccg_args) --mccg_diversify_rollouts"
+}
+
+mask35_w_balA_linucb_a08_mccg_conddeep_args() {
+  echo "$(mask35_w_balA_linucb_a08_mccg_args) --mccg_conditional_deep --mccg_promising_h_margin 200 --mccg_promising_rollouts 3"
+}
+
+mask35_w_balA_linucb_a08_mccg_beam_args() {
+  echo "$(mask35_w_balA_linucb_a08_mccg_args) --mccg_beam_width 3 --mccg_beam_lookahead 1"
+}
+
+mask35_w_balA_linucb_a08_mccg_socreward_args() {
+  echo "$(mask35_w_balA_linucb_a08_mccg_args) --mccg_soc_bandit_reward"
+}
+
+mask35_w_balA_linucb_a08_mccg_phase_args() {
+  echo "$(mask35_w_balA_linucb_a08_mccg_args) --mccg_phase_gating --mccg_phase_low 0.20 --mccg_phase_high 0.85"
+}
+
+mask35_w_balA_linucb_a08_mccg_all6_args() {
+  echo "$(mask35_w_balA_linucb_a08_mccg_stallscore_args) --mccg_two_stage_progress --mccg_diversify_rollouts --mccg_conditional_deep --mccg_promising_h_margin 200 --mccg_promising_rollouts 3 --mccg_beam_width 3 --mccg_beam_lookahead 1 --mccg_soc_bandit_reward --mccg_phase_gating --mccg_phase_low 0.20 --mccg_phase_high 0.85"
+}
+
+mask35_w_balA_linucb_a08_mccg_delayed_args() {
+  echo "$(mask35_w_balA_linucb_a08_mccg_beam_args) --bandit_hierarchy --hl_delayed_reward --hl_delayed_reward_scale 1.0 --hl_delayed_reward_discount 0.97"
 }
 
 # Map-aware policy: baseline on Paris/den520d, X35 elsewhere
@@ -209,6 +244,14 @@ map_aware_args() {
         aggressive_4of5) mask35_w_balA_linucb_a08_args ;;
         aggressive_4of5_mc) mask35_w_balA_linucb_a08_mccg_args ;;
         aggressive_4of5_mc_stallscore) mask35_w_balA_linucb_a08_mccg_stallscore_args ;;
+        aggressive_4of5_mc_twostage) mask35_w_balA_linucb_a08_mccg_twostage_args ;;
+        aggressive_4of5_mc_diverse) mask35_w_balA_linucb_a08_mccg_diverse_args ;;
+        aggressive_4of5_mc_conddeep) mask35_w_balA_linucb_a08_mccg_conddeep_args ;;
+        aggressive_4of5_mc_beam) mask35_w_balA_linucb_a08_mccg_beam_args ;;
+        aggressive_4of5_mc_socreward) mask35_w_balA_linucb_a08_mccg_socreward_args ;;
+        aggressive_4of5_mc_phase) mask35_w_balA_linucb_a08_mccg_phase_args ;;
+        aggressive_4of5_mc_all6) mask35_w_balA_linucb_a08_mccg_all6_args ;;
+        aggressive_4of5_mc_delayed) mask35_w_balA_linucb_a08_mccg_delayed_args ;;
         *) echo "Unknown --profile: $PROFILE" >&2; exit 1 ;;
       esac
       ;;

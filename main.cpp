@@ -122,6 +122,62 @@ int main(int argc, char *argv[])
       .help("apply MCCG stay/progress/regress score terms only during stall expansions")
       .default_value(false)
       .implicit_value(true);
+  program.add_argument("--mccg_two_stage_progress")
+      .help("select rollout candidate by min f then tie-break by progress ratio")
+      .default_value(false)
+      .implicit_value(true);
+  program.add_argument("--mccg_diversify_rollouts")
+      .help("diversify rollout generation via order/arm variation across rollouts")
+      .default_value(false)
+      .implicit_value(true);
+  program.add_argument("--mccg_conditional_deep")
+      .help("use extra rollouts on promising nodes (based on h proximity to best)")
+      .default_value(false)
+      .implicit_value(true);
+  program.add_argument("--mccg_promising_h_margin")
+      .help("h margin from best seen to trigger conditional deep rollouts")
+      .scan<'d', int>()
+      .default_value(200);
+  program.add_argument("--mccg_promising_rollouts")
+      .help("rollout budget when conditional deep trigger is active")
+      .scan<'d', int>()
+      .default_value(2);
+  program.add_argument("--mccg_beam_width")
+      .help("beam width over rollout candidates (1 disables beam)")
+      .scan<'d', int>()
+      .default_value(1);
+  program.add_argument("--mccg_beam_lookahead")
+      .help("additional lookahead steps per beam candidate")
+      .scan<'d', int>()
+      .default_value(1);
+  program.add_argument("--mccg_soc_bandit_reward")
+      .help("use h-delta and goal-progress based reward for high-level PIBT arm updates")
+      .default_value(false)
+      .implicit_value(true);
+  program.add_argument("--mccg_phase_gating")
+      .help("activate aggressive MCCG only within a mid-game h-ratio window")
+      .default_value(false)
+      .implicit_value(true);
+  program.add_argument("--mccg_phase_low")
+      .help("lower bound for remaining-h ratio when phase gating is enabled")
+      .scan<'g', double>()
+      .default_value(0.20);
+  program.add_argument("--mccg_phase_high")
+      .help("upper bound for remaining-h ratio when phase gating is enabled")
+      .scan<'g', double>()
+      .default_value(0.85);
+  program.add_argument("--hl_delayed_reward")
+      .help("enable delayed high-level bandit reward based on incumbent SOC improvements")
+      .default_value(false)
+      .implicit_value(true);
+  program.add_argument("--hl_delayed_reward_scale")
+      .help("scale for delayed high-level reward from incumbent improvement")
+      .scan<'g', double>()
+      .default_value(1.0);
+  program.add_argument("--hl_delayed_reward_discount")
+      .help("per-hop discount on delayed high-level credit assignment")
+      .scan<'g', double>()
+      .default_value(0.97);
   program.add_argument("--reward_autoscale")
       .help("PIBT reward autoscale: off | zscore")
       .default_value(std::string("off"));
@@ -202,6 +258,29 @@ int main(int argc, char *argv[])
       program.get<double>("mccg_score_w_regress");
   const auto mccg_score_stall_only =
       program.get<bool>("mccg_score_stall_only");
+  const auto mccg_two_stage_progress =
+      program.get<bool>("mccg_two_stage_progress");
+  const auto mccg_diversify_rollouts =
+      program.get<bool>("mccg_diversify_rollouts");
+  const auto mccg_conditional_deep =
+      program.get<bool>("mccg_conditional_deep");
+  const auto mccg_promising_h_margin =
+      program.get<int>("mccg_promising_h_margin");
+  const auto mccg_promising_rollouts =
+      program.get<int>("mccg_promising_rollouts");
+  const auto mccg_beam_width = program.get<int>("mccg_beam_width");
+  const auto mccg_beam_lookahead =
+      program.get<int>("mccg_beam_lookahead");
+  const auto mccg_soc_bandit_reward =
+      program.get<bool>("mccg_soc_bandit_reward");
+  const auto mccg_phase_gating = program.get<bool>("mccg_phase_gating");
+  const auto mccg_phase_low = program.get<double>("mccg_phase_low");
+  const auto mccg_phase_high = program.get<double>("mccg_phase_high");
+  const auto hl_delayed_reward = program.get<bool>("hl_delayed_reward");
+  const auto hl_delayed_reward_scale =
+      program.get<double>("hl_delayed_reward_scale");
+  const auto hl_delayed_reward_discount =
+      program.get<double>("hl_delayed_reward_discount");
   const auto reward_autoscale = program.get<std::string>("reward_autoscale");
   const auto reward_weight_learning =
       program.get<std::string>("reward_weight_learning");
@@ -232,6 +311,21 @@ int main(int argc, char *argv[])
   LaCAM::MCCG_SCORE_W_PROGRESS = mccg_score_w_progress;
   LaCAM::MCCG_SCORE_W_REGRESS = mccg_score_w_regress;
     LaCAM::MCCG_SCORE_STALL_ONLY = mccg_score_stall_only;
+    LaCAM::MCCG_TWO_STAGE_PROGRESS = mccg_two_stage_progress;
+    LaCAM::MCCG_DIVERSIFY_ROLLOUTS = mccg_diversify_rollouts;
+    LaCAM::MCCG_CONDITIONAL_DEEP = mccg_conditional_deep;
+    LaCAM::MCCG_PROMISING_H_MARGIN = std::max(0, mccg_promising_h_margin);
+    LaCAM::MCCG_PROMISING_ROLLOUTS = std::max(1, mccg_promising_rollouts);
+    LaCAM::MCCG_BEAM_WIDTH = std::max(1, mccg_beam_width);
+    LaCAM::MCCG_BEAM_LOOKAHEAD = std::max(0, mccg_beam_lookahead);
+    LaCAM::MCCG_SOC_BANDIT_REWARD = mccg_soc_bandit_reward;
+    LaCAM::MCCG_PHASE_GATING = mccg_phase_gating;
+    LaCAM::MCCG_PHASE_LOW = std::max(0.0, std::min(1.0, mccg_phase_low));
+    LaCAM::MCCG_PHASE_HIGH = std::max(0.0, std::min(1.0, mccg_phase_high));
+    LaCAM::HL_DELAYED_REWARD = hl_delayed_reward;
+    LaCAM::HL_DELAYED_REWARD_SCALE = std::max(0.0, hl_delayed_reward_scale);
+    LaCAM::HL_DELAYED_REWARD_DISCOUNT =
+        std::max(0.0, std::min(1.0, hl_delayed_reward_discount));
 
   // pibt
   PIBT::SWAP = !program.get<bool>("no_pibt_swap");

@@ -180,6 +180,33 @@
   - Best observed setting in this round: stay=0.2, progress=0.8, regress=1.2 with `--mccg_score_stall_only`.
   - This setting is promoted as profile alias `aggressive_4of5_mc_stallscore` (experimental).
 
+### Delayed high-level reward credit (LaCAM long-term signal)
+
+- Motivation: exploit LaCAM depth-first/global search outcomes (incumbent cost improvements) as delayed reward for high-level bandits.
+- Implementation:
+  - Added delayed reward credit assignment from incumbent improvements back to stored high-level decisions along the incumbent path.
+  - New CLI knobs:
+    - `--hl_delayed_reward`
+    - `--hl_delayed_reward_scale`
+    - `--hl_delayed_reward_discount`
+  - Added profile alias: `aggressive_4of5_mc_delayed` (beam + hierarchy + delayed reward enabled).
+- A/B comparison (same 5-map/25-scenario protocol):
+  - Control run ID: 20260526_230845 (`aggressive_4of5_mc_beam`)
+    - Mean SOC +0.536, worst-map SOC +0.000, non-negative maps 5/5
+    - Mean median-CT +3.658, mean p95-CT +0.740
+  - Delayed run ID: 20260526_231203 (`aggressive_4of5_mc_delayed`)
+    - Mean SOC +0.292, worst-map SOC -0.150, non-negative maps 4/5
+    - Mean median-CT +6.688, mean p95-CT +12.372
+  - Delta (delayed - control):
+    - Mean SOC -0.244
+    - Worst-map SOC -0.150
+    - Non-negative maps -1
+    - Mean median-CT +3.030
+    - Mean p95-CT +11.632
+- Delayed-reward conclusion:
+  - Runtime improved, but SOC and robustness degraded.
+  - Keep delayed reward as experimental (off by default), not promoted for SOC-first target.
+
 ### 64-mask findings (5 maps, 25 scenarios/map)
 
 - Best global mask tier by mean SOC gain: X34/X35/X36/X37 (~+0.4112%).

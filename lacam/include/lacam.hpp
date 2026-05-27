@@ -98,6 +98,20 @@ struct LaCAM {
   static double MCCG_SCORE_W_PROGRESS;
   static double MCCG_SCORE_W_REGRESS;
   static bool MCCG_SCORE_STALL_ONLY;
+  static bool MCCG_TWO_STAGE_PROGRESS;
+  static bool MCCG_DIVERSIFY_ROLLOUTS;
+  static bool MCCG_CONDITIONAL_DEEP;
+  static int MCCG_PROMISING_H_MARGIN;
+  static int MCCG_PROMISING_ROLLOUTS;
+  static int MCCG_BEAM_WIDTH;
+  static int MCCG_BEAM_LOOKAHEAD;
+  static bool MCCG_SOC_BANDIT_REWARD;
+  static bool MCCG_PHASE_GATING;
+  static double MCCG_PHASE_LOW;
+  static double MCCG_PHASE_HIGH;
+  static bool HL_DELAYED_REWARD;
+  static double HL_DELAYED_REWARD_SCALE;
+  static double HL_DELAYED_REWARD_DISCOUNT;
   static std::string ORDER_BANDIT_MODE;     // coarse3 | agent_level
   static std::string ORDER_AGENT_REWARD;    // first_only | topk
 
@@ -116,7 +130,7 @@ struct LaCAM {
   ~LaCAM();
   Solution solve();
   bool set_new_config(HNode *S, LNode *M, Config &Q_to, int rollout_budget,
-                      bool stall_mode);
+            bool stall_mode, bool mccg_active);
   void rewrite(HNode *H_from, HNode *H_to);
   int get_g_val(HNode *H_parent, const Config &Q_to);
   int get_h_val(const Config &Q);

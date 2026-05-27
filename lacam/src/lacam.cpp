@@ -21,10 +21,30 @@ double LaCAM::MCCG_SCORE_W_STAY = 0.0;
 double LaCAM::MCCG_SCORE_W_PROGRESS = 0.0;
 double LaCAM::MCCG_SCORE_W_REGRESS = 0.0;
 bool LaCAM::MCCG_SCORE_STALL_ONLY = false;
+bool LaCAM::MCCG_TWO_STAGE_PROGRESS = false;
+bool LaCAM::MCCG_DIVERSIFY_ROLLOUTS = false;
+bool LaCAM::MCCG_CONDITIONAL_DEEP = false;
+int LaCAM::MCCG_PROMISING_H_MARGIN = 200;
+int LaCAM::MCCG_PROMISING_ROLLOUTS = 2;
+int LaCAM::MCCG_BEAM_WIDTH = 1;
+int LaCAM::MCCG_BEAM_LOOKAHEAD = 1;
+bool LaCAM::MCCG_SOC_BANDIT_REWARD = false;
+bool LaCAM::MCCG_PHASE_GATING = false;
+double LaCAM::MCCG_PHASE_LOW = 0.20;
+double LaCAM::MCCG_PHASE_HIGH = 0.85;
+bool LaCAM::HL_DELAYED_REWARD = false;
+double LaCAM::HL_DELAYED_REWARD_SCALE = 1.0;
+double LaCAM::HL_DELAYED_REWARD_DISCOUNT = 0.97;
 std::string LaCAM::ORDER_BANDIT_MODE = "coarse3";
 std::string LaCAM::ORDER_AGENT_REWARD = "first_only";
 
 namespace {
+struct DelayedDecision {
+  int sched_arm = 0;
+  int pibt_arm = -1;
+  bool used_hierarchy_pibt = false;
+};
+
 constexpr int BANDIT_ARM_COUNT = 3;
 std::array<int, BANDIT_ARM_COUNT> ORDER_PULLS = {0, 0, 0};
 std::array<double, BANDIT_ARM_COUNT> ORDER_REWARDS = {0.0, 0.0, 0.0};
@@ -267,10 +287,50 @@ Solution LaCAM::solve()
   EXPLORED[H_init->Q] = H_init;
   GC_HNodes.push_back(H_init);
   int best_h_seen = H_init->h;
+  int best_goal_g_seen = INT_MAX;
   int no_improve_iters = 0;
   int restart_cooldown = 0;
   constexpr int STALL_TRIGGER_ITERS = 600;
   constexpr int STALL_RESTART_PERIOD = 120;
+  std::unordered_map<HNode *, DelayedDecision> delayed_decisions;
+
+  auto credit_incumbent_improvement = [&](HNode *incumbent) {
+    if (!LaCAM::HL_DELAYED_REWARD || incumbent == nullptr) return;
+    const auto new_g = incumbent->g;
+    if (new_g >= best_goal_g_seen) return;
+    const auto old_g = best_goal_g_seen;
+    best_goal_g_seen = new_g;
+
+    double base_reward = 0.12;
+    if (old_g != INT_MAX) {
+      const auto delta = old_g - new_g;
+      if (delta <= 0) return;
+      base_reward = LaCAM::HL_DELAYED_REWARD_SCALE *
+                    (static_cast<double>(delta) /
+                     static_cast<double>(std::max(1, old_g)));
+    }
+    base_reward = squash_reward(base_reward);
+
+    auto *node = incumbent;
+    int hops = 0;
+    while (node != nullptr && node != H_init) {
+      const auto it = delayed_decisions.find(node);
+      if (it != delayed_decisions.end()) {
+        const auto discounted =
+            base_reward * std::pow(LaCAM::HL_DELAYED_REWARD_DISCOUNT, hops);
+        if (USE_SCHED_BANDIT) {
+          update_arm(SCHED_PULLS, SCHED_REWARDS, it->second.sched_arm,
+                     discounted);
+        }
+        if (it->second.used_hierarchy_pibt && it->second.pibt_arm >= 0) {
+          update_arm(PIBT_PULLS, PIBT_REWARDS, it->second.pibt_arm,
+                     discounted);
+        }
+      }
+      node = node->parent;
+      hops += 1;
+    }
+  };
 
   // search loop
   solver_info(2, "search iteration begins");
@@ -357,6 +417,7 @@ Solution LaCAM::solve()
     if (H_goal == nullptr && is_same_config(H->Q, ins->goals)) {
       H_goal = H;
       solver_info(2, "found solution, g=", H->g, ", depth=", H->depth);
+      credit_incumbent_improvement(H_goal);
       if (!ANYTIME) break;
       continue;
     }
@@ -495,17 +556,59 @@ Solution LaCAM::solve()
     } else if (PIBT_ROLLOUTS_AFTER_GOAL > 1 && H_goal != nullptr) {
       rollout_budget = std::min(PIBT_ROLLOUTS, PIBT_ROLLOUTS_AFTER_GOAL);
     }
+    if (MCCG_CONDITIONAL_DEEP && PIBT_ROLLOUTS > 1 &&
+        H->h <= best_h_seen + std::max(0, MCCG_PROMISING_H_MARGIN)) {
+      const auto promising_budget =
+          std::max(1, std::min(PIBT_ROLLOUTS, MCCG_PROMISING_ROLLOUTS));
+      rollout_budget = std::max(rollout_budget, promising_budget);
+    }
+    bool mccg_active = true;
+    if (MCCG_PHASE_GATING && H_init->h > 0) {
+      const auto rem_ratio = static_cast<double>(H->h) /
+                             static_cast<double>(H_init->h);
+      mccg_active = (rem_ratio >= MCCG_PHASE_LOW && rem_ratio <= MCCG_PHASE_HIGH);
+      if (!mccg_active) rollout_budget = 1;
+    }
     if (use_hierarchy_with_pibt) PIBT::set_forced_pibt_arm(pibt_arm);
-    auto res = set_new_config(H, L, Q_to, rollout_budget, stall_mode);
+    auto res =
+        set_new_config(H, L, Q_to, rollout_budget, stall_mode, mccg_active);
     if (use_hierarchy_with_pibt) PIBT::set_forced_pibt_arm(-1);
     delete L;
     if (!res) {
-      if (use_hierarchy_with_pibt)
-        update_arm(PIBT_PULLS, PIBT_REWARDS, pibt_arm, squash_reward(-0.8));
+      if (use_hierarchy_with_pibt) {
+        const auto fail_reward =
+            LaCAM::MCCG_SOC_BANDIT_REWARD ? -0.6 : -0.8;
+        update_arm(PIBT_PULLS, PIBT_REWARDS, pibt_arm,
+                   squash_reward(fail_reward));
+      }
       continue;
     }
-    if (use_hierarchy_with_pibt)
-      update_arm(PIBT_PULLS, PIBT_REWARDS, pibt_arm, squash_reward(0.4));
+    if (use_hierarchy_with_pibt) {
+      if (LaCAM::MCCG_SOC_BANDIT_REWARD) {
+        const auto h_after = get_h_val(Q_to);
+        const auto dh = H->h - h_after;
+        int goals_gain = 0;
+        int goals_loss = 0;
+        for (size_t i = 0; i < ins->N; ++i) {
+          const bool was_goal = (H->Q[i] == ins->goals[i]);
+          const bool now_goal = (Q_to[i] == ins->goals[i]);
+          if (!was_goal && now_goal) goals_gain += 1;
+          if (was_goal && !now_goal) goals_loss += 1;
+        }
+        const auto denom_h = std::max(1, H->h);
+        const auto denom_n = std::max(1, static_cast<int>(ins->N));
+        const auto dh_norm = static_cast<double>(dh) /
+                             static_cast<double>(denom_h);
+        const auto goal_term = static_cast<double>(goals_gain - goals_loss) /
+                               static_cast<double>(denom_n);
+        auto reward = 0.10 + 1.0 * dh_norm + 0.6 * goal_term;
+        if (stall_mode) reward += 0.05;
+        update_arm(PIBT_PULLS, PIBT_REWARDS, pibt_arm,
+                   squash_reward(reward));
+      } else {
+        update_arm(PIBT_PULLS, PIBT_REWARDS, pibt_arm, squash_reward(0.4));
+      }
+    }
 
     // check explored list
     auto iter = EXPLORED.find(Q_to);
@@ -517,6 +620,8 @@ Solution LaCAM::solve()
       OPEN.push_front(H_new);
       EXPLORED[H_new->Q] = H_new;
       GC_HNodes.push_back(H_new);
+      delayed_decisions.emplace(H_new, DelayedDecision{sched_arm, pibt_arm,
+                                                       use_hierarchy_with_pibt});
       if (USE_SCHED_BANDIT)
         update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm,
                    squash_reward(0.4 + (stall_mode && sched_arm == 0 ? 0.05 : 0.0)));
@@ -534,6 +639,10 @@ Solution LaCAM::solve()
       if (USE_SCHED_BANDIT)
         update_arm(SCHED_PULLS, SCHED_REWARDS, sched_arm,
                    squash_reward(-0.1 + (stall_mode && sched_arm != 0 ? -0.10 : 0.0)));
+    }
+
+    if (H_goal != nullptr && H_goal->g < best_goal_g_seen) {
+      credit_incumbent_improvement(H_goal);
     }
   }
 
@@ -572,7 +681,7 @@ Solution LaCAM::solve()
 }
 
 bool LaCAM::set_new_config(HNode *H, LNode *L, Config &Q_to, int rollout_budget,
-                           bool stall_mode)
+                           bool stall_mode, bool mccg_active)
 {
   auto Q_base = Config(ins->N, nullptr);
   for (uint d = 0; d < L->depth; ++d) Q_base[L->who[d]] = L->where[d];
@@ -580,14 +689,58 @@ bool LaCAM::set_new_config(HNode *H, LNode *L, Config &Q_to, int rollout_budget,
   const int rollout_count = std::max(1, rollout_budget);
   auto first_f = INT_MAX;
   auto best_f_seen = INT_MAX;
-  auto best_score = std::numeric_limits<double>::infinity();
-  auto best_score_f = INT_MAX;
   auto found = false;
   const double inv_n = ins->N > 0 ? 1.0 / static_cast<double>(ins->N) : 0.0;
 
+  const bool two_stage = mccg_active && LaCAM::MCCG_TWO_STAGE_PROGRESS;
+  const bool beam_enabled =
+      mccg_active && LaCAM::MCCG_BEAM_WIDTH > 1 && rollout_count > 1;
+
+  auto best_score = std::numeric_limits<double>::infinity();
+  auto best_score_f = INT_MAX;
+  auto best_progress = -std::numeric_limits<double>::infinity();
+
+  std::vector<Config> beam_q;
+  std::vector<int> beam_f;
+  std::vector<double> beam_progress;
+
+  auto maybe_add_beam = [&](Config &&q, const int cand_f,
+                            const double progress_ratio) {
+    if (!beam_enabled) return;
+    int pos = 0;
+    while (pos < static_cast<int>(beam_f.size()) && beam_f[pos] <= cand_f) {
+      ++pos;
+    }
+    beam_q.insert(beam_q.begin() + pos, std::move(q));
+    beam_f.insert(beam_f.begin() + pos, cand_f);
+    beam_progress.insert(beam_progress.begin() + pos, progress_ratio);
+    if (static_cast<int>(beam_q.size()) > LaCAM::MCCG_BEAM_WIDTH) {
+      beam_q.pop_back();
+      beam_f.pop_back();
+      beam_progress.pop_back();
+    }
+  };
+
   for (int k = 0; k < rollout_count; ++k) {
     auto Q_cand = Q_base;
-    const auto ok = pibt.set_new_config(H->Q, Q_cand, H->order);
+    auto rollout_order = H->order;
+    if (mccg_active && LaCAM::MCCG_DIVERSIFY_ROLLOUTS &&
+        !rollout_order.empty()) {
+      const auto shift = k % static_cast<int>(rollout_order.size());
+      std::rotate(rollout_order.begin(), rollout_order.begin() + shift,
+                  rollout_order.end());
+      if (k % 3 == 2 && rollout_order.size() > 2) {
+        std::shuffle(rollout_order.begin(), rollout_order.end(), MT);
+      }
+    }
+
+    bool forced_arm_set = false;
+    if (mccg_active && LaCAM::MCCG_DIVERSIFY_ROLLOUTS && !PIBT::FORCE_PIBT_ARM) {
+      PIBT::set_forced_pibt_arm(k % 3);
+      forced_arm_set = true;
+    }
+    const auto ok = pibt.set_new_config(H->Q, Q_cand, rollout_order);
+    if (forced_arm_set) PIBT::set_forced_pibt_arm(-1);
     if (!ok) continue;
 
     const auto edge_cost = get_edge_cost(H->Q, Q_cand);
@@ -607,30 +760,44 @@ bool LaCAM::set_new_config(HNode *H, LNode *L, Config &Q_to, int rollout_budget,
         regress_cnt += 1;
       }
     }
+    const auto progress_ratio =
+        static_cast<double>(progress_cnt - regress_cnt) * inv_n;
 
     const bool enable_score_terms =
-      !LaCAM::MCCG_SCORE_STALL_ONLY || stall_mode;
+        mccg_active && (!LaCAM::MCCG_SCORE_STALL_ONLY || stall_mode);
     const double w_stay = enable_score_terms ? LaCAM::MCCG_SCORE_W_STAY : 0.0;
     const double w_progress =
-      enable_score_terms ? LaCAM::MCCG_SCORE_W_PROGRESS : 0.0;
+        enable_score_terms ? LaCAM::MCCG_SCORE_W_PROGRESS : 0.0;
     const double w_regress =
-      enable_score_terms ? LaCAM::MCCG_SCORE_W_REGRESS : 0.0;
+        enable_score_terms ? LaCAM::MCCG_SCORE_W_REGRESS : 0.0;
 
     const auto cand_score =
-        LaCAM::MCCG_SCORE_W_EDGE * static_cast<double>(edge_cost) +
-        LaCAM::MCCG_SCORE_W_H * static_cast<double>(h_val) +
-      w_stay * (static_cast<double>(stay_cnt) * inv_n) -
-      w_progress * (static_cast<double>(progress_cnt) * inv_n) +
-      w_regress * (static_cast<double>(regress_cnt) * inv_n);
+        (mccg_active ? LaCAM::MCCG_SCORE_W_EDGE
+                     : 1.0) * static_cast<double>(edge_cost) +
+        (mccg_active ? LaCAM::MCCG_SCORE_W_H : 1.0) *
+            static_cast<double>(h_val) +
+        w_stay * (static_cast<double>(stay_cnt) * inv_n) -
+        w_progress * (static_cast<double>(progress_cnt) * inv_n) +
+        w_regress * (static_cast<double>(regress_cnt) * inv_n);
 
     if (!found) first_f = cand_f;
     if (!found || cand_f < best_f_seen) best_f_seen = cand_f;
-    if (!found || cand_score < best_score ||
-        (cand_score == best_score && cand_f < best_score_f)) {
+    found = true;
+
+    if (beam_enabled) {
+      maybe_add_beam(std::move(Q_cand), cand_f, progress_ratio);
+    } else if (two_stage) {
+      if (cand_f < best_score_f ||
+          (cand_f == best_score_f && progress_ratio > best_progress)) {
+        best_score_f = cand_f;
+        best_progress = progress_ratio;
+        Q_to = std::move(Q_cand);
+      }
+    } else if (cand_score < best_score ||
+               (cand_score == best_score && cand_f < best_score_f)) {
       best_score = cand_score;
       best_score_f = cand_f;
       Q_to = std::move(Q_cand);
-      found = true;
     }
 
     if (found && k > 0 && PIBT_ROLLOUTS_EARLY_STOP_MARGIN > 0 &&
@@ -640,7 +807,47 @@ bool LaCAM::set_new_config(HNode *H, LNode *L, Config &Q_to, int rollout_budget,
     }
   }
 
-  return found;
+  if (!found) return false;
+
+  if (beam_enabled && !beam_q.empty()) {
+    const auto lookahead_steps = std::max(0, LaCAM::MCCG_BEAM_LOOKAHEAD);
+    auto best_idx = 0;
+    auto best_beam_eval = std::numeric_limits<double>::infinity();
+    for (int i = 0; i < static_cast<int>(beam_q.size()); ++i) {
+      auto eval = static_cast<double>(beam_f[i]);
+      auto q_curr = beam_q[i];
+      for (int s = 0; s < lookahead_steps; ++s) {
+        auto q_next = Config(ins->N, nullptr);
+        auto lookahead_order = H->order;
+        if (mccg_active && LaCAM::MCCG_DIVERSIFY_ROLLOUTS &&
+            !lookahead_order.empty()) {
+          const auto shift = (i + s + 1) % static_cast<int>(lookahead_order.size());
+          std::rotate(lookahead_order.begin(), lookahead_order.begin() + shift,
+                      lookahead_order.end());
+        }
+        bool forced_arm_set = false;
+        if (mccg_active && LaCAM::MCCG_DIVERSIFY_ROLLOUTS &&
+            !PIBT::FORCE_PIBT_ARM) {
+          PIBT::set_forced_pibt_arm((i + s + 1) % 3);
+          forced_arm_set = true;
+        }
+        const auto ok2 = pibt.set_new_config(q_curr, q_next, lookahead_order);
+        if (forced_arm_set) PIBT::set_forced_pibt_arm(-1);
+        if (!ok2) break;
+        eval += static_cast<double>(get_edge_cost(q_curr, q_next) +
+                                    get_h_val(q_next));
+        q_curr = std::move(q_next);
+      }
+      if (eval < best_beam_eval ||
+          (eval == best_beam_eval && beam_progress[i] > beam_progress[best_idx])) {
+        best_beam_eval = eval;
+        best_idx = i;
+      }
+    }
+    Q_to = std::move(beam_q[best_idx]);
+  }
+
+  return true;
 }
 
 void LaCAM::rewrite(HNode *H_from, HNode *H_to)
