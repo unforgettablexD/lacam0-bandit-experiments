@@ -130,6 +130,38 @@
   - The new candidates generally hurt tail runtime relative to MC(4,2,3).
   - Keep MC(4,2,3) as the only retained adaptive MCCG preset for now.
 
+### Rollout candidate scoring ablation (new MCCG score terms)
+
+- Solver extension:
+  - MCCG candidate ranking now supports weighted terms for:
+    - edge cost
+    - h-value
+    - stay ratio
+    - progress ratio
+    - regress ratio
+- New CLI knobs in main binary:
+  - `--mccg_score_w_edge`
+  - `--mccg_score_w_h`
+  - `--mccg_score_w_stay`
+  - `--mccg_score_w_progress`
+  - `--mccg_score_w_regress`
+- Runner extension:
+  - `run_focus5_map_aware_vs_baseline.sh` now forwards experimental scoring knobs for `aggressive_4of5_mc`:
+    - `--mc-score-stay`
+    - `--mc-score-progress`
+    - `--mc-score-regress`
+- Tested scoring settings (with MC(4,2,3) rollout budget fixed):
+  - Run ID: 20260526_215156, stay=0.2, progress=0.8, regress=1.2
+  - Run ID: 20260526_215441, stay=0.1, progress=1.2, regress=1.6
+- Aggregate comparison vs baseline (mean over 5 maps):
+  - mc_adaptive_4_2_3 (211539): mean SOC +0.536, mean median-CT +5.398, mean p95-CT +3.520
+  - mc_score_A (215156): mean SOC +0.536, mean median-CT -2.786, mean p95-CT -3.626
+  - mc_score_B (215441): mean SOC +0.536, mean median-CT +1.520, mean p95-CT -10.006
+- Scoring-ablation conclusion:
+  - Added scoring flexibility is now available for future exploration.
+  - The two tested score-weight settings did not improve SOC and degraded runtime tails.
+  - Keep default scoring weights (edge=1, h=1, other terms=0) for retained adaptive MCCG profile.
+
 ### 64-mask findings (5 maps, 25 scenarios/map)
 
 - Best global mask tier by mean SOC gain: X34/X35/X36/X37 (~+0.4112%).

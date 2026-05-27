@@ -98,6 +98,26 @@ int main(int argc, char *argv[])
       .help("early stop rollouts when best f improves over first by this margin")
       .scan<'d', int>()
       .default_value(0);
+  program.add_argument("--mccg_score_w_edge")
+      .help("MCCG candidate score weight for edge cost term")
+      .scan<'g', double>()
+      .default_value(1.0);
+  program.add_argument("--mccg_score_w_h")
+      .help("MCCG candidate score weight for h-value term")
+      .scan<'g', double>()
+      .default_value(1.0);
+  program.add_argument("--mccg_score_w_stay")
+      .help("MCCG candidate score weight for stay ratio penalty")
+      .scan<'g', double>()
+      .default_value(0.0);
+  program.add_argument("--mccg_score_w_progress")
+      .help("MCCG candidate score weight for progress ratio reward")
+      .scan<'g', double>()
+      .default_value(0.0);
+  program.add_argument("--mccg_score_w_regress")
+      .help("MCCG candidate score weight for regress ratio penalty")
+      .scan<'g', double>()
+      .default_value(0.0);
   program.add_argument("--reward_autoscale")
       .help("PIBT reward autoscale: off | zscore")
       .default_value(std::string("off"));
@@ -169,6 +189,13 @@ int main(int argc, char *argv[])
       program.get<int>("pibt_rollouts_after_goal");
   const auto pibt_rollouts_early_margin =
       program.get<int>("pibt_rollouts_early_margin");
+  const auto mccg_score_w_edge = program.get<double>("mccg_score_w_edge");
+  const auto mccg_score_w_h = program.get<double>("mccg_score_w_h");
+  const auto mccg_score_w_stay = program.get<double>("mccg_score_w_stay");
+  const auto mccg_score_w_progress =
+      program.get<double>("mccg_score_w_progress");
+  const auto mccg_score_w_regress =
+      program.get<double>("mccg_score_w_regress");
   const auto reward_autoscale = program.get<std::string>("reward_autoscale");
   const auto reward_weight_learning =
       program.get<std::string>("reward_weight_learning");
@@ -193,6 +220,11 @@ int main(int argc, char *argv[])
       std::max(1, std::min(LaCAM::PIBT_ROLLOUTS, pibt_rollouts_after_goal));
   LaCAM::PIBT_ROLLOUTS_EARLY_STOP_MARGIN =
       std::max(0, pibt_rollouts_early_margin);
+  LaCAM::MCCG_SCORE_W_EDGE = mccg_score_w_edge;
+  LaCAM::MCCG_SCORE_W_H = mccg_score_w_h;
+  LaCAM::MCCG_SCORE_W_STAY = mccg_score_w_stay;
+  LaCAM::MCCG_SCORE_W_PROGRESS = mccg_score_w_progress;
+  LaCAM::MCCG_SCORE_W_REGRESS = mccg_score_w_regress;
 
   // pibt
   PIBT::SWAP = !program.get<bool>("no_pibt_swap");

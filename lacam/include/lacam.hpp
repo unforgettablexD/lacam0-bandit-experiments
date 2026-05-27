@@ -92,6 +92,11 @@ struct LaCAM {
   static int PIBT_ROLLOUTS;
   static int PIBT_ROLLOUTS_AFTER_GOAL;
   static int PIBT_ROLLOUTS_EARLY_STOP_MARGIN;
+  static double MCCG_SCORE_W_EDGE;
+  static double MCCG_SCORE_W_H;
+  static double MCCG_SCORE_W_STAY;
+  static double MCCG_SCORE_W_PROGRESS;
+  static double MCCG_SCORE_W_REGRESS;
   static std::string ORDER_BANDIT_MODE;     // coarse3 | agent_level
   static std::string ORDER_AGENT_REWARD;    // first_only | topk
 

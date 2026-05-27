@@ -15,6 +15,11 @@ int LaCAM::BANDIT_EPSILON_DECAY_STEPS = 0;
 int LaCAM::PIBT_ROLLOUTS = 1;
 int LaCAM::PIBT_ROLLOUTS_AFTER_GOAL = 1;
 int LaCAM::PIBT_ROLLOUTS_EARLY_STOP_MARGIN = 0;
+double LaCAM::MCCG_SCORE_W_EDGE = 1.0;
+double LaCAM::MCCG_SCORE_W_H = 1.0;
+double LaCAM::MCCG_SCORE_W_STAY = 0.0;
+double LaCAM::MCCG_SCORE_W_PROGRESS = 0.0;
+double LaCAM::MCCG_SCORE_W_REGRESS = 0.0;
 std::string LaCAM::ORDER_BANDIT_MODE = "coarse3";
 std::string LaCAM::ORDER_AGENT_REWARD = "first_only";
 
@@ -571,26 +576,56 @@ bool LaCAM::set_new_config(HNode *H, LNode *L, Config &Q_to, int rollout_budget)
   for (uint d = 0; d < L->depth; ++d) Q_base[L->who[d]] = L->where[d];
 
   const int rollout_count = std::max(1, rollout_budget);
-  auto best_f = INT_MAX;
   auto first_f = INT_MAX;
+  auto best_f_seen = INT_MAX;
+  auto best_score = std::numeric_limits<double>::infinity();
+  auto best_score_f = INT_MAX;
   auto found = false;
+  const double inv_n = ins->N > 0 ? 1.0 / static_cast<double>(ins->N) : 0.0;
 
   for (int k = 0; k < rollout_count; ++k) {
     auto Q_cand = Q_base;
     const auto ok = pibt.set_new_config(H->Q, Q_cand, H->order);
     if (!ok) continue;
 
-    const auto cand_f = get_edge_cost(H->Q, Q_cand) + get_h_val(Q_cand);
+    const auto edge_cost = get_edge_cost(H->Q, Q_cand);
+    const auto h_val = get_h_val(Q_cand);
+    const auto cand_f = edge_cost + h_val;
+
+    int stay_cnt = 0;
+    int progress_cnt = 0;
+    int regress_cnt = 0;
+    for (size_t i = 0; i < ins->N; ++i) {
+      if (Q_cand[i] == H->Q[i]) stay_cnt += 1;
+      const auto d_from = D->get((int)i, H->Q[i]);
+      const auto d_to = D->get((int)i, Q_cand[i]);
+      if (d_to < d_from) {
+        progress_cnt += 1;
+      } else if (d_to > d_from) {
+        regress_cnt += 1;
+      }
+    }
+
+    const auto cand_score =
+        LaCAM::MCCG_SCORE_W_EDGE * static_cast<double>(edge_cost) +
+        LaCAM::MCCG_SCORE_W_H * static_cast<double>(h_val) +
+        LaCAM::MCCG_SCORE_W_STAY * (static_cast<double>(stay_cnt) * inv_n) -
+        LaCAM::MCCG_SCORE_W_PROGRESS * (static_cast<double>(progress_cnt) * inv_n) +
+        LaCAM::MCCG_SCORE_W_REGRESS * (static_cast<double>(regress_cnt) * inv_n);
+
     if (!found) first_f = cand_f;
-    if (!found || cand_f < best_f) {
-      best_f = cand_f;
+    if (!found || cand_f < best_f_seen) best_f_seen = cand_f;
+    if (!found || cand_score < best_score ||
+        (cand_score == best_score && cand_f < best_score_f)) {
+      best_score = cand_score;
+      best_score_f = cand_f;
       Q_to = std::move(Q_cand);
       found = true;
     }
 
     if (found && k > 0 && PIBT_ROLLOUTS_EARLY_STOP_MARGIN > 0 &&
         first_f < INT_MAX &&
-        best_f <= first_f - PIBT_ROLLOUTS_EARLY_STOP_MARGIN) {
+        best_f_seen <= first_f - PIBT_ROLLOUTS_EARLY_STOP_MARGIN) {
       break;
     }
   }
