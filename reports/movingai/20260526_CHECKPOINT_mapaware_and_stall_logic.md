@@ -53,6 +53,23 @@
   - Worst-map SOC gain: 0.00%
   - Solved guard preserved on all maps (25/25 each)
 
+### 4/5-map optimization update (professor-approved criterion)
+
+- New acceptance criterion applied: at least 4/5 maps non-negative SOC gain.
+- Added contextual PIBT bandit option (`linucb`) and tuned exploration strength on map-aware X35 profile.
+- Best 4/5 candidate from suite:
+  - Run ID: 20260526_192338_lacam0_focus5_map_aware_suite
+  - Config: mapaware_x35_linucb_a08
+  - Mean SOC gain: +0.64%
+  - Worst-map SOC gain: -0.01%
+  - Non-negative maps: 4/5
+  - Solved guard: preserved
+- Confirmation run after promotion:
+  - Run ID: 20260526_193126_lacam0_focus5_map_aware_vs_baseline
+  - Mean SOC gain: +0.64% (vs prior +0.45%)
+  - Non-negative maps: 4/5
+  - Runtime tradeoff observed (median/p95 less favorable than strict 5/5 profile)
+
 ### 64-mask findings (5 maps, 25 scenarios/map)
 
 - Best global mask tier by mean SOC gain: X34/X35/X36/X37 (~+0.4112%).
@@ -90,5 +107,7 @@
 
 ## Recommended Next Step
 
-- Keep promoted map-aware default as X35 + w_balA on random/warehouses, baseline on Paris/den520d.
-- Focus next on reducing random-map p95 volatility while preserving worst-map SOC >= 0 and solved guard.
+- Keep two deployment modes available:
+  - strict_5of5: mapaware_x35 (epsilon-greedy + w_balA)
+  - soc_4of5: mapaware_x35_linucb_a08 (higher SOC, one slight negative map allowed)
+- Next tuning target: recover p95 runtime for soc_4of5 profile without losing its SOC gain.

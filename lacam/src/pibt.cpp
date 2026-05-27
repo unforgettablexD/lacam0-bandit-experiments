@@ -19,11 +19,22 @@ int PIBT::REGRET_TRIALS = 1;
 
 namespace {
 constexpr int BANDIT_ARM_COUNT = 3;
+constexpr int PIBT_CONTEXT_DIM = 5;
 std::array<int, BANDIT_ARM_COUNT> PIBT_ARM_PULLS = {0, 0, 0};
 std::array<double, BANDIT_ARM_COUNT> PIBT_ARM_REWARDS = {0.0, 0.0, 0.0};
+std::array<std::array<double, PIBT_CONTEXT_DIM>, BANDIT_ARM_COUNT>
+    PIBT_ARM_THETA = {};
 std::ofstream PIBT_EVENTS_LOG;
 bool PIBT_EVENTS_LOG_READY = false;
 long long PIBT_EVENT_SEQ = 0;
+
+double dot_ctx(const std::array<double, PIBT_CONTEXT_DIM> &a,
+               const std::array<double, PIBT_CONTEXT_DIM> &b)
+{
+  double s = 0.0;
+  for (int i = 0; i < PIBT_CONTEXT_DIM; ++i) s += a[i] * b[i];
+  return s;
+}
 
 void log_pibt_event(const int arm, const double reward)
 {
@@ -75,7 +86,8 @@ double W_GOAL = 1.0, W_DELAY = 1.0, W_STAY = 1.0, W_LEAVE = 1.0, W_OCC = 1.0,
 
 double squash_reward(const double raw_reward) { return std::tanh(raw_reward); }
 
-int pick_arm(std::mt19937 &rng)
+int pick_arm(std::mt19937 &rng,
+             const std::array<double, PIBT_CONTEXT_DIM> &context)
 {
   if (!PIBT::USE_PIBT_BANDIT) return 0;
   for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
@@ -148,6 +160,29 @@ int pick_arm(std::mt19937 &rng)
     return Pick(rng);
   }
 
+  if (policy == "linucb" || policy == "contextual_ucb") {
+    int total = 0;
+    for (const auto p : PIBT_ARM_PULLS) total += p;
+
+    const double xnorm = std::max(1e-6, dot_ctx(context, context));
+    const double alpha = std::max(0.02, PIBT::BANDIT_EPSILON);
+
+    int best = 0;
+    double best_score = -1e18;
+    for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
+      const double pred = dot_ctx(PIBT_ARM_THETA[a], context);
+      const double bonus =
+          alpha * std::sqrt(std::log((double)total + 2.0) /
+                            ((double)PIBT_ARM_PULLS[a] + 1.0) * xnorm);
+      const double score = pred + bonus;
+      if (score > best_score) {
+        best_score = score;
+        best = a;
+      }
+    }
+    return best;
+  }
+
   if (policy == "random_uniform" || policy == "random" || policy == "uniform_random") {
     std::uniform_int_distribution<int> UArm(0, BANDIT_ARM_COUNT - 1);
     return UArm(rng);
@@ -170,11 +205,25 @@ int pick_arm(std::mt19937 &rng)
   return best;
 }
 
-void update_arm(const int arm, const double reward)
+void update_arm(const int arm, const double reward,
+                const std::array<double, PIBT_CONTEXT_DIM> *context)
 {
   if (!PIBT::USE_PIBT_BANDIT) return;
   PIBT_ARM_PULLS[arm] += 1;
   PIBT_ARM_REWARDS[arm] += reward;
+
+  const auto policy = PIBT::BANDIT_POLICY;
+  if ((policy == "linucb" || policy == "contextual_ucb") && context != nullptr) {
+    const double pred = dot_ctx(PIBT_ARM_THETA[arm], *context);
+    const double err = reward - pred;
+    const double lr = 0.05 / std::sqrt((double)std::max(1, PIBT_ARM_PULLS[arm]));
+    for (int i = 0; i < PIBT_CONTEXT_DIM; ++i) {
+      PIBT_ARM_THETA[arm][i] += lr * err * (*context)[i];
+      PIBT_ARM_THETA[arm][i] =
+          std::max(-3.0, std::min(3.0, PIBT_ARM_THETA[arm][i]));
+    }
+  }
+
   log_pibt_event(arm, reward);
 }
 }  // namespace
@@ -305,8 +354,6 @@ bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
 {
   if (is_expired(deadline)) return false;
   const auto K = Q_from[i]->neighbors.size();
-  const auto selected_arm = FORCE_PIBT_ARM ? FORCED_PIBT_ARM : pick_arm(MT);
-  LAST_PIBT_ARM = selected_arm;
   const auto d_now = D->get(i, Q_from[i]);
   const bool at_goal_now = (d_now == 0);
 
@@ -322,6 +369,24 @@ bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
       }
     }
   }
+
+  const int degree_now = static_cast<int>(Q_from[i]->neighbors.size());
+  const double neighbor_occupancy_ratio =
+      (degree_now > 0)
+          ? (double)num_neighbor_agents / (double)degree_now
+          : 0.0;
+  const std::array<double, PIBT_CONTEXT_DIM> arm_context = {
+      1.0,
+      std::min(1.0, (double)d_now / 20.0),
+      at_goal_now ? 1.0 : 0.0,
+      neighbor_occupancy_ratio,
+      (degree_now <= 2) ? 1.0 : 0.0,
+  };
+
+  const auto selected_arm = FORCE_PIBT_ARM
+                                ? FORCED_PIBT_ARM
+                                : pick_arm(MT, arm_context);
+  LAST_PIBT_ARM = selected_arm;
 
   auto get_successor_cost = [&](Vertex *u, int mode, bool swap = false) {
     if (is_expired(deadline)) return std::make_tuple(INT_MAX / 4, INT_MAX / 4, 1.0f);
@@ -496,12 +561,12 @@ bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
     // priority inheritance
     if (j != NO_AGENT && u != Q_from[i] && Q_to[j] == nullptr &&
         !funcPIBT(j, Q_from, Q_to)) {
-      update_arm(selected_arm, immediate_reward - 1.0);
+      update_arm(selected_arm, immediate_reward - 1.0, &arm_context);
       continue;
     }
 
     // success to plan next one step
-    update_arm(selected_arm, immediate_reward + 0.2);
+    update_arm(selected_arm, immediate_reward + 0.2, &arm_context);
     if (k == 0) swap_operation();
     return true;
   }
@@ -509,7 +574,7 @@ bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
   // failed to secure node
   occupied_next[Q_from[i]->id] = i;
   Q_to[i] = Q_from[i];
-  update_arm(selected_arm, -1.0);
+  update_arm(selected_arm, -1.0, &arm_context);
   return false;
 }
 
