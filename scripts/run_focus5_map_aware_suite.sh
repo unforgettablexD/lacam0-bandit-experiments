@@ -156,6 +156,10 @@ mask35_w_balA_linucb_a08_args() {
   echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy linucb --bandit_epsilon 0.08 --bandit_epsilon_final 0.08 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
 }
 
+mask35_w_balA_linucb_a08_mccg_args() {
+  echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy linucb --bandit_epsilon 0.08 --bandit_epsilon_final 0.08 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --pibt_rollouts 4 --pibt_rollouts_after_goal 2 --pibt_rollouts_early_margin 3 --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
+}
+
 mask35_w_balA_linucb_a10_args() {
   echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy linucb --bandit_epsilon 0.10 --bandit_epsilon_final 0.10 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
 }
@@ -203,6 +207,12 @@ args_for_cfg_and_map() {
         *) mask35_w_balA_linucb_a08_args ;;
       esac
       ;;
+    aggressive_4of5_mc)
+      case "$map_name" in
+        Paris_1_256.map|den520d.map) baseline_args ;;
+        *) mask35_w_balA_linucb_a08_mccg_args ;;
+      esac
+      ;;
     mapaware_x35_linucb_a10)
       case "$map_name" in
         Paris_1_256.map|den520d.map) baseline_args ;;
@@ -248,6 +258,7 @@ declare -a CONFIGS=(
   "mapaware_x35_linucb_a08"
   "strict_5of5"
   "aggressive_4of5"
+  "aggressive_4of5_mc"
   "mapaware_x35_linucb_a10"
   "mapaware_x36"
   "mapaware_random_x35"

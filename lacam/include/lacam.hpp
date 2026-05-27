@@ -89,6 +89,9 @@ struct LaCAM {
   static double BANDIT_EPSILON;
   static double BANDIT_EPSILON_FINAL;
   static int BANDIT_EPSILON_DECAY_STEPS;
+  static int PIBT_ROLLOUTS;
+  static int PIBT_ROLLOUTS_AFTER_GOAL;
+  static int PIBT_ROLLOUTS_EARLY_STOP_MARGIN;
   static std::string ORDER_BANDIT_MODE;     // coarse3 | agent_level
   static std::string ORDER_AGENT_REWARD;    // first_only | topk
 
@@ -106,7 +109,7 @@ struct LaCAM {
         const Deadline *_deadline = nullptr, int _seed = 0);
   ~LaCAM();
   Solution solve();
-  bool set_new_config(HNode *S, LNode *M, Config &Q_to);
+    bool set_new_config(HNode *S, LNode *M, Config &Q_to, int rollout_budget);
   void rewrite(HNode *H_from, HNode *H_to);
   int get_g_val(HNode *H_parent, const Config &Q_to);
   int get_h_val(const Config &Q);

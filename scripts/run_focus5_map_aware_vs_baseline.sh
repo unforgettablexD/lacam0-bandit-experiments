@@ -39,7 +39,7 @@ Usage: $0 [options]
   --scenarios N
   --data-root PATH
   --run-id ID                  Resume/rebuild an existing run id
-  --profile NAME               strict_5of5 | aggressive_4of5
+  --profile NAME               strict_5of5 | aggressive_4of5 | aggressive_4of5_mc
 EOF
 }
 
@@ -151,6 +151,10 @@ mask35_w_balA_linucb_a08_args() {
   echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy linucb --bandit_epsilon 0.08 --bandit_epsilon_final 0.08 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
 }
 
+mask35_w_balA_linucb_a08_mccg_args() {
+  echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy linucb --bandit_epsilon 0.08 --bandit_epsilon_final 0.08 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --pibt_rollouts 4 --pibt_rollouts_after_goal 2 --pibt_rollouts_early_margin 3 --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
+}
+
 # Map-aware policy: baseline on Paris/den520d, X35 elsewhere
 map_aware_args() {
   local map_name="$1"
@@ -162,6 +166,7 @@ map_aware_args() {
       case "$PROFILE" in
         strict_5of5) mask35_w_balA_args ;;
         aggressive_4of5) mask35_w_balA_linucb_a08_args ;;
+        aggressive_4of5_mc) mask35_w_balA_linucb_a08_mccg_args ;;
         *) echo "Unknown --profile: $PROFILE" >&2; exit 1 ;;
       esac
       ;;

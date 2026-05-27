@@ -87,6 +87,28 @@
   - strict_5of5: epsilon-greedy X35 + w_balA
   - aggressive_4of5: LinUCB X35 + w_balA (a08)
 
+### LaCAM3-inspired Monte-Carlo configuration generator (MCCG)
+
+- Added rollout-based PIBT candidate selection at high-level expansion with runtime knobs:
+  - `--pibt_rollouts`
+  - `--pibt_rollouts_after_goal`
+  - `--pibt_rollouts_early_margin`
+- Raw MCCG profile run:
+  - Run ID: 20260526_210813_lacam0_focus5_map_aware_vs_baseline
+  - Profile: aggressive_4of5_mc (LinUCB a08 + `pibt_rollouts=4`)
+  - Mean SOC gain: +1.852% (large boost)
+  - Runtime regression: severe (median/p95 degraded strongly)
+- Adaptive MCCG profile run:
+  - Run ID: 20260526_211539_lacam0_focus5_map_aware_vs_baseline
+  - Profile: aggressive_4of5_mc with adaptive rollouts
+    (`pibt_rollouts=4`, `pibt_rollouts_after_goal=2`, `pibt_rollouts_early_margin=3`)
+  - Mean SOC gain: +0.536%
+  - Non-negative maps: 5/5
+  - Runtime restored (similar or better than non-MC aggressive profile)
+- Current takeaway:
+  - MCCG is useful as an experimental high-SOC lever.
+  - Adaptive MCCG neutralized most runtime damage but also neutralized extra SOC gain.
+
 ### 64-mask findings (5 maps, 25 scenarios/map)
 
 - Best global mask tier by mean SOC gain: X34/X35/X36/X37 (~+0.4112%).
@@ -126,8 +148,9 @@
 
 - Keep two deployment modes available:
   - strict_5of5: mapaware_x35 (epsilon-greedy + w_balA)
-  - soc_4of5: mapaware_x35_linucb_a08 (higher SOC, one slight negative map allowed)
-- Next tuning target: recover p95 runtime for soc_4of5 profile without losing its SOC gain.
+  - aggressive_4of5: mapaware_x35_linucb_a08 (feature-expanded, 5/5 non-negative in latest validation)
+  - aggressive_4of5_mc: rollout-enabled experimental mode
+- Next tuning target: adaptive MCCG that retains part of raw MCCG SOC gain without runtime collapse.
 
 Updated practical recommendation:
 - For robust deployment, prefer strict_5of5.

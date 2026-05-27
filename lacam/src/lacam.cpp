@@ -12,6 +12,9 @@ std::string LaCAM::BANDIT_POLICY = "ucb1";
 double LaCAM::BANDIT_EPSILON = 0.10;
 double LaCAM::BANDIT_EPSILON_FINAL = 0.10;
 int LaCAM::BANDIT_EPSILON_DECAY_STEPS = 0;
+int LaCAM::PIBT_ROLLOUTS = 1;
+int LaCAM::PIBT_ROLLOUTS_AFTER_GOAL = 1;
+int LaCAM::PIBT_ROLLOUTS_EARLY_STOP_MARGIN = 0;
 std::string LaCAM::ORDER_BANDIT_MODE = "coarse3";
 std::string LaCAM::ORDER_AGENT_REWARD = "first_only";
 
@@ -480,8 +483,14 @@ Solution LaCAM::solve()
 
     // create successors at the high-level search
     auto Q_to = Config(ins->N, nullptr);
+    auto rollout_budget = 1;
+    if (PIBT_ROLLOUTS > 1 && stall_mode) {
+      rollout_budget = PIBT_ROLLOUTS;
+    } else if (PIBT_ROLLOUTS_AFTER_GOAL > 1 && H_goal != nullptr) {
+      rollout_budget = std::min(PIBT_ROLLOUTS, PIBT_ROLLOUTS_AFTER_GOAL);
+    }
     if (use_hierarchy_with_pibt) PIBT::set_forced_pibt_arm(pibt_arm);
-    auto res = set_new_config(H, L, Q_to);
+    auto res = set_new_config(H, L, Q_to, rollout_budget);
     if (use_hierarchy_with_pibt) PIBT::set_forced_pibt_arm(-1);
     delete L;
     if (!res) {
@@ -556,10 +565,37 @@ Solution LaCAM::solve()
   return solution;
 }
 
-bool LaCAM::set_new_config(HNode *H, LNode *L, Config &Q_to)
+bool LaCAM::set_new_config(HNode *H, LNode *L, Config &Q_to, int rollout_budget)
 {
-  for (uint d = 0; d < L->depth; ++d) Q_to[L->who[d]] = L->where[d];
-  return pibt.set_new_config(H->Q, Q_to, H->order);
+  auto Q_base = Config(ins->N, nullptr);
+  for (uint d = 0; d < L->depth; ++d) Q_base[L->who[d]] = L->where[d];
+
+  const int rollout_count = std::max(1, rollout_budget);
+  auto best_f = INT_MAX;
+  auto first_f = INT_MAX;
+  auto found = false;
+
+  for (int k = 0; k < rollout_count; ++k) {
+    auto Q_cand = Q_base;
+    const auto ok = pibt.set_new_config(H->Q, Q_cand, H->order);
+    if (!ok) continue;
+
+    const auto cand_f = get_edge_cost(H->Q, Q_cand) + get_h_val(Q_cand);
+    if (!found) first_f = cand_f;
+    if (!found || cand_f < best_f) {
+      best_f = cand_f;
+      Q_to = std::move(Q_cand);
+      found = true;
+    }
+
+    if (found && k > 0 && PIBT_ROLLOUTS_EARLY_STOP_MARGIN > 0 &&
+        first_f < INT_MAX &&
+        best_f <= first_f - PIBT_ROLLOUTS_EARLY_STOP_MARGIN) {
+      break;
+    }
+  }
+
+  return found;
 }
 
 void LaCAM::rewrite(HNode *H_from, HNode *H_to)

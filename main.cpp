@@ -86,6 +86,18 @@ int main(int argc, char *argv[])
   program.add_argument("--order_agent_reward")
       .help("agent-level order reward: first_only | topk")
       .default_value(std::string("first_only"));
+  program.add_argument("--pibt_rollouts")
+      .help("number of Monte-Carlo PIBT rollouts per high-level expansion")
+      .scan<'d', int>()
+      .default_value(1);
+  program.add_argument("--pibt_rollouts_after_goal")
+      .help("rollouts used after first solution is found (<= pibt_rollouts)")
+      .scan<'d', int>()
+      .default_value(1);
+  program.add_argument("--pibt_rollouts_early_margin")
+      .help("early stop rollouts when best f improves over first by this margin")
+      .scan<'d', int>()
+      .default_value(0);
   program.add_argument("--reward_autoscale")
       .help("PIBT reward autoscale: off | zscore")
       .default_value(std::string("off"));
@@ -152,6 +164,11 @@ int main(int argc, char *argv[])
   const auto bandit_hierarchy = program.get<bool>("bandit_hierarchy");
   const auto order_bandit_mode = program.get<std::string>("order_bandit_mode");
   const auto order_agent_reward = program.get<std::string>("order_agent_reward");
+    const auto pibt_rollouts = program.get<int>("pibt_rollouts");
+  const auto pibt_rollouts_after_goal =
+      program.get<int>("pibt_rollouts_after_goal");
+  const auto pibt_rollouts_early_margin =
+      program.get<int>("pibt_rollouts_early_margin");
   const auto reward_autoscale = program.get<std::string>("reward_autoscale");
   const auto reward_weight_learning =
       program.get<std::string>("reward_weight_learning");
@@ -171,6 +188,11 @@ int main(int argc, char *argv[])
   // set hyper parameters
   DistTable::MULTI_THREAD_INIT = !program.get<bool>("no_dist_table_init");
   LaCAM::ANYTIME = program.get<bool>("anytime");
+    LaCAM::PIBT_ROLLOUTS = std::max(1, pibt_rollouts);
+  LaCAM::PIBT_ROLLOUTS_AFTER_GOAL =
+      std::max(1, std::min(LaCAM::PIBT_ROLLOUTS, pibt_rollouts_after_goal));
+  LaCAM::PIBT_ROLLOUTS_EARLY_STOP_MARGIN =
+      std::max(0, pibt_rollouts_early_margin);
 
   // pibt
   PIBT::SWAP = !program.get<bool>("no_pibt_swap");
