@@ -53,7 +53,7 @@ int main(int argc, char *argv[])
       .default_value(false)
       .implicit_value(true);
   program.add_argument("--bandit_policy")
-      .help("pibt bandit policy: ucb1 | thompson | epsilon_greedy | random_uniform")
+      .help("pibt bandit policy: ucb1 | thompson | epsilon_greedy | softmax | random_uniform")
       .default_value(std::string("ucb1"));
   program.add_argument("--bandit_epsilon")
       .help("epsilon for epsilon-greedy")
@@ -92,6 +92,34 @@ int main(int argc, char *argv[])
   program.add_argument("--reward_weight_learning")
       .help("PIBT reward weight learning: off | online_linear")
       .default_value(std::string("off"));
+  program.add_argument("--reward_w_goal")
+      .help("PIBT reward weight for goal bonus (-1 keeps default)")
+      .scan<'g', double>()
+      .default_value(-1.0);
+  program.add_argument("--reward_w_delay")
+      .help("PIBT reward weight for delay penalty (-1 keeps default)")
+      .scan<'g', double>()
+      .default_value(-1.0);
+  program.add_argument("--reward_w_stay")
+      .help("PIBT reward weight for stay penalty (-1 keeps default)")
+      .scan<'g', double>()
+      .default_value(-1.0);
+  program.add_argument("--reward_w_leave")
+      .help("PIBT reward weight for leave-goal penalty (-1 keeps default)")
+      .scan<'g', double>()
+      .default_value(-1.0);
+  program.add_argument("--reward_w_occ")
+      .help("PIBT reward weight for occupancy penalty (-1 keeps default)")
+      .scan<'g', double>()
+      .default_value(-1.0);
+  program.add_argument("--reward_w_cong")
+      .help("PIBT reward weight for local congestion penalty (-1 keeps default)")
+      .scan<'g', double>()
+      .default_value(-1.0);
+  program.add_argument("--reward_w_noprog")
+      .help("PIBT reward weight for no-progress penalty (-1 keeps default)")
+      .scan<'g', double>()
+      .default_value(-1.0);
 
   try {
     program.parse_args(argc, argv);
@@ -127,6 +155,13 @@ int main(int argc, char *argv[])
   const auto reward_autoscale = program.get<std::string>("reward_autoscale");
   const auto reward_weight_learning =
       program.get<std::string>("reward_weight_learning");
+    const auto reward_w_goal = program.get<double>("reward_w_goal");
+    const auto reward_w_delay = program.get<double>("reward_w_delay");
+    const auto reward_w_stay = program.get<double>("reward_w_stay");
+    const auto reward_w_leave = program.get<double>("reward_w_leave");
+    const auto reward_w_occ = program.get<double>("reward_w_occ");
+    const auto reward_w_cong = program.get<double>("reward_w_cong");
+    const auto reward_w_noprog = program.get<double>("reward_w_noprog");
   const auto no_events_log = program.get<bool>("no_events_log");
   const auto pibt_regret_trials = program.get<int>("pibt_regret_trials");
   const auto ins = scen_name.size() > 0 ? Instance(scen_name, map_name, N)
@@ -143,6 +178,18 @@ int main(int argc, char *argv[])
   PIBT::set_bandit_config(!no_pibt_bandit, bandit_policy, bandit_epsilon,
                           bandit_epsilon_final, bandit_epsilon_decay_steps);
   PIBT::set_reward_config(reward_autoscale, reward_weight_learning);
+    if (reward_w_goal >= 0.0 || reward_w_delay >= 0.0 || reward_w_stay >= 0.0 ||
+            reward_w_leave >= 0.0 || reward_w_occ >= 0.0 || reward_w_cong >= 0.0 ||
+            reward_w_noprog >= 0.0) {
+        PIBT::set_reward_weights(
+                reward_w_goal >= 0.0 ? reward_w_goal : 1.0,
+                reward_w_delay >= 0.0 ? reward_w_delay : 1.0,
+                reward_w_stay >= 0.0 ? reward_w_stay : 1.0,
+                reward_w_leave >= 0.0 ? reward_w_leave : 1.0,
+                reward_w_occ >= 0.0 ? reward_w_occ : 1.0,
+                reward_w_cong >= 0.0 ? reward_w_cong : 1.0,
+                reward_w_noprog >= 0.0 ? reward_w_noprog : 1.0);
+    }
     PIBT::set_runtime_config(!no_events_log, pibt_regret_trials);
   LaCAM::set_bandit_config(!no_order_bandit, !no_branch_bandit,
                            !no_scheduler_bandit, !no_random_bandit,

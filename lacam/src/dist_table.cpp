@@ -65,6 +65,31 @@ int pick_dist_arm()
     return best;
   }
 
+  if (DistTable::DIST_BANDIT_POLICY == "softmax" ||
+      DistTable::DIST_BANDIT_POLICY == "boltzmann") {
+    const double temp = std::max(0.02, DistTable::DIST_BANDIT_EPSILON);
+    std::array<double, DIST_ARM_COUNT> logits = {0.0, 0.0, 0.0};
+    double max_logit = -1e18;
+    for (int a = 0; a < DIST_ARM_COUNT; ++a) {
+      const auto mean = DIST_REWARDS[a] / std::max(1, DIST_PULLS[a]);
+      logits[a] = mean / temp;
+      max_logit = std::max(max_logit, logits[a]);
+    }
+    std::array<double, DIST_ARM_COUNT> probs = {0.0, 0.0, 0.0};
+    double sum_exp = 0.0;
+    for (int a = 0; a < DIST_ARM_COUNT; ++a) {
+      probs[a] = std::exp(logits[a] - max_logit);
+      sum_exp += probs[a];
+    }
+    if (sum_exp <= 0.0) {
+      std::uniform_int_distribution<int> UArm(0, DIST_ARM_COUNT - 1);
+      return UArm(DIST_RNG);
+    }
+    for (int a = 0; a < DIST_ARM_COUNT; ++a) probs[a] /= sum_exp;
+    std::discrete_distribution<int> Pick({probs[0], probs[1], probs[2]});
+    return Pick(DIST_RNG);
+  }
+
   if (DistTable::DIST_BANDIT_POLICY == "random_uniform" ||
       DistTable::DIST_BANDIT_POLICY == "random" ||
       DistTable::DIST_BANDIT_POLICY == "uniform_random") {

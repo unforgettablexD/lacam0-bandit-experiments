@@ -83,6 +83,29 @@ int pick_arm(std::array<int, BANDIT_ARM_COUNT> &pulls,
     }
     return best;
   }
+  if (policy == "softmax" || policy == "boltzmann") {
+    const double temp = std::max(0.02, LaCAM::BANDIT_EPSILON);
+    std::array<double, BANDIT_ARM_COUNT> logits = {0.0, 0.0, 0.0};
+    double max_logit = -1e18;
+    for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
+      const auto mean = rewards[a] / std::max(1, pulls[a]);
+      logits[a] = mean / temp;
+      max_logit = std::max(max_logit, logits[a]);
+    }
+    std::array<double, BANDIT_ARM_COUNT> probs = {0.0, 0.0, 0.0};
+    double sum_exp = 0.0;
+    for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
+      probs[a] = std::exp(logits[a] - max_logit);
+      sum_exp += probs[a];
+    }
+    if (sum_exp <= 0.0) {
+      std::uniform_int_distribution<int> UArm(0, BANDIT_ARM_COUNT - 1);
+      return UArm(rng);
+    }
+    for (int a = 0; a < BANDIT_ARM_COUNT; ++a) probs[a] /= sum_exp;
+    std::discrete_distribution<int> Pick({probs[0], probs[1], probs[2]});
+    return Pick(rng);
+  }
   if (policy == "random_uniform" || policy == "random" || policy == "uniform_random") {
     std::uniform_int_distribution<int> UArm(0, BANDIT_ARM_COUNT - 1);
     return UArm(rng);
@@ -237,21 +260,18 @@ Solution LaCAM::solve()
   int best_h_seen = H_init->h;
   int no_improve_iters = 0;
   int restart_cooldown = 0;
-  constexpr int STALL_TRIGGER_ITERS = 300;
-  constexpr int STALL_RESTART_PERIOD = 80;
+  constexpr int STALL_TRIGGER_ITERS = 600;
+  constexpr int STALL_RESTART_PERIOD = 120;
 
   // search loop
   solver_info(2, "search iteration begins");
   while (!OPEN.empty() && !is_expired(deadline)) {
     ++loop_cnt;
-    const bool stall_mode_pre = (no_improve_iters >= STALL_TRIGGER_ITERS);
-
     int sched_arm = pick_arm(SCHED_PULLS, SCHED_REWARDS, USE_SCHED_BANDIT, MT);
     // Safety: before the first feasible goal node is found, keep original
     // extraction behavior. Exploring scheduler alternatives too early can stall
     // search on hard instances.
     if (H_goal == nullptr) sched_arm = 0;
-    if (stall_mode_pre) sched_arm = 0;
     const bool use_hierarchy_with_pibt =
       USE_BANDIT_HIERARCHY && PIBT::USE_PIBT_BANDIT;
     const int pibt_arm = use_hierarchy_with_pibt
@@ -370,7 +390,6 @@ Solution LaCAM::solve()
         } else {
           order_arm = pick_arm(ORDER_PULLS, ORDER_REWARDS, USE_ORDER_BANDIT, MT);
         }
-        if (stall_mode) order_arm = 0;
         if (order_arm == 1) {
           std::reverse(order.begin(), order.end());
         } else if (order_arm == 2) {
@@ -382,11 +401,10 @@ Solution LaCAM::solve()
       auto C = H->Q[i]->actions;
 
       int rand_arm = pick_arm(RAND_PULLS, RAND_REWARDS, USE_RANDOM_BANDIT, MT);
-      if (stall_mode) rand_arm = 0;
       double p_shuffle = 0.1;
       if (rand_arm == 1) p_shuffle = 0.5;
       if (rand_arm == 2) p_shuffle = 0.9;
-      if (stall_mode) p_shuffle = 0.0;
+      if (stall_mode) p_shuffle = std::min(p_shuffle, 0.2);
       if (rrd(MT) < p_shuffle) std::shuffle(C.begin(), C.end(), MT);
 
       int branch_arm = 0;
@@ -395,7 +413,6 @@ Solution LaCAM::solve()
       } else {
         branch_arm = pick_arm(BRANCH_PULLS, BRANCH_REWARDS, USE_BRANCH_BANDIT, MT);
       }
-      if (stall_mode) branch_arm = 1;
       if (branch_arm == 1) {
         std::sort(C.begin(), C.end(),
                   [&](const Vertex *a, const Vertex *b) { return D->get(i, a) < D->get(i, b); });
@@ -418,13 +435,7 @@ Solution LaCAM::solve()
         order_reward = (d0 > 0) ? 0.2 : 0.0;
         if (order_arm == 0) order_reward += 0.1;
       }
-      if (stall_mode) {
-        if (order_arm == 0) {
-          order_reward += 0.05;
-        } else {
-          order_reward -= 0.15;
-        }
-      }
+      if (stall_mode && order_arm != 0) order_reward -= 0.05;
       if (ORDER_BANDIT_MODE == "agent_level") {
         if (!order.empty()) {
           if (ORDER_AGENT_REWARD == "topk") {
@@ -448,18 +459,18 @@ Solution LaCAM::solve()
 
       if (use_hierarchy_with_pibt) {
         double branch_reward = (branch_arm == 1 ? 0.15 : (branch_arm == 2 ? 0.1 : 0.05));
-        if (stall_mode && branch_arm != 1) branch_reward -= 0.2;
+        if (stall_mode && branch_arm != 1) branch_reward -= 0.08;
         update_arm(BRANCH_PULLS_C[pibt_arm][order_arm], BRANCH_REWARDS_C[pibt_arm][order_arm], branch_arm,
                    squash_reward(branch_reward));
       } else if (USE_BRANCH_BANDIT) {
         double branch_reward = (branch_arm == 1 ? 0.15 : (branch_arm == 2 ? 0.1 : 0.05));
-        if (stall_mode && branch_arm != 1) branch_reward -= 0.2;
+        if (stall_mode && branch_arm != 1) branch_reward -= 0.08;
         update_arm(BRANCH_PULLS, BRANCH_REWARDS, branch_arm,
                    squash_reward(branch_reward));
       }
       if (USE_RANDOM_BANDIT) {
         double random_reward = 0.1 + 0.1 * (1.0 - p_shuffle);
-        if (stall_mode && rand_arm != 0) random_reward -= 0.25;
+        if (stall_mode && rand_arm != 0) random_reward -= 0.10;
         update_arm(RAND_PULLS, RAND_REWARDS, rand_arm,
                    squash_reward(random_reward));
       }

@@ -25,7 +25,7 @@ if [[ -z "${DATA_ROOT:-}" ]]; then
   fi
 fi
 
-RUN_ID="$(date +%Y%m%d_%H%M%S)_lacam0_focus5_map_aware_vs_baseline"
+RUN_ID="$(date +%Y%m%d_%H%M%S)_lacam0_focus5_soc_tuning_suite"
 RAW_CSV="$OUT_DIR/${RUN_ID}.csv"
 CHECKPOINT_DIR="$OUT_DIR/${RUN_ID}_checkpoints"
 RESUME_RUN_ID=""
@@ -67,14 +67,6 @@ if [[ ! -d "$DATA_ROOT" ]]; then
   echo "Missing data root: $DATA_ROOT" >&2
   exit 1
 fi
-if [[ "$PARALLEL" -lt 1 ]]; then
-  echo "--parallel must be >= 1" >&2
-  exit 1
-fi
-if [[ "$SCEN_COUNT" -lt 1 ]]; then
-  echo "--scenarios must be >= 1" >&2
-  exit 1
-fi
 
 mkdir -p "$CHECKPOINT_DIR"
 
@@ -84,7 +76,7 @@ run_case_row() {
   local mapb scenb out solved soc mk sol ct
   mapb="$(basename "$map_path")"
   scenb="$(basename "$scen_path")"
-  out="/tmp/lacam0_mapaware_${RANDOM}_${RANDOM}.txt"
+  out="/tmp/lacam0_soc_tuning_${RANDOM}_${RANDOM}.txt"
 
   # shellcheck disable=SC2086
   "$ROOT_DIR/build/main" -m "$map_path" -i "$scen_path" -N "$agents" -t "$TIME_LIMIT" -v 0 -o "$out" $cargs >/dev/null || true
@@ -109,7 +101,7 @@ run_map_chunk() {
     return 0
   fi
 
-  tmp_dir="$(mktemp -d /tmp/lacam0_mapaware_chunk_XXXXXX)"
+  tmp_dir="$(mktemp -d /tmp/lacam0_soc_tuning_chunk_XXXXXX)"
   chunk_tmp="${chunk}.tmp"
 
   seq 1 "$SCEN_COUNT" | xargs -I{} -P "$PARALLEL" bash -lc \
@@ -120,39 +112,73 @@ run_map_chunk() {
   rm -rf "$tmp_dir"
 }
 
-mask_args() {
-  local mask="$1"
-  local p o b s r d args bits
-  bits=$(awk -v n="$mask" 'BEGIN{r=""; for(i=0;i<6;i++){r=(n%2) r; n=int(n/2)} print r}')
-  p=${bits:0:1}; o=${bits:1:1}; b=${bits:2:1}; s=${bits:3:1}; r=${bits:4:1}; d=${bits:5:1}
-  args=""
-  [[ "$p" == "0" ]] && args+=" --no_pibt_bandit"
-  [[ "$o" == "0" ]] && args+=" --no_order_bandit"
-  [[ "$b" == "0" ]] && args+=" --no_branch_bandit"
-  [[ "$s" == "0" ]] && args+=" --no_scheduler_bandit"
-  [[ "$r" == "0" ]] && args+=" --no_random_bandit"
-  [[ "$d" == "0" ]] && args+=" --no_dist_bandit"
-  args+=" --bandit_policy epsilon_greedy --bandit_epsilon 0.05 --bandit_epsilon_final 0.05 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --no_events_log"
-  echo "${args# }"
-}
-
 baseline_args() {
   echo "--no_pibt_bandit --no_order_bandit --no_branch_bandit --no_scheduler_bandit --no_random_bandit --no_dist_bandit --no_events_log"
 }
 
-mask35_w_balA_args() {
-  echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy epsilon_greedy --bandit_epsilon 0.05 --bandit_epsilon_final 0.05 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
-}
+mask35_args() {
+  local policy="$1"
+  local eps="$2"
+  local regret="$3"
+  local args="--pibt_regret_trials ${regret} --no_events_log"
+  # X35 bits: pibt=1 order=0 branch=0 scheduler=0 random=1 dist=1
+  args+=" --no_order_bandit --no_branch_bandit --no_scheduler_bandit"
 
-# Map-aware policy: baseline on Paris/den520d, X35 elsewhere
-map_aware_args() {
-  local map_name="$1"
-  case "$map_name" in
-    Paris_1_256.map|den520d.map)
-      baseline_args
+  case "$policy" in
+    epsilon_greedy)
+      args+=" --bandit_policy epsilon_greedy --bandit_epsilon ${eps} --bandit_epsilon_final ${eps} --bandit_epsilon_decay_steps 0"
+      ;;
+    thompson|softmax)
+      args+=" --bandit_policy ${policy} --bandit_epsilon ${eps} --bandit_epsilon_final ${eps} --bandit_epsilon_decay_steps 0"
       ;;
     *)
-      mask35_w_balA_args
+      echo "Unknown policy: $policy" >&2
+      exit 1
+      ;;
+  esac
+  echo "$args"
+}
+
+args_for_cfg_and_map() {
+  local cfg="$1"
+  local map_name="$2"
+  case "$cfg" in
+    baseline_x00)
+      baseline_args
+      ;;
+    x35_eps005_r5)
+      case "$map_name" in
+        Paris_1_256.map|den520d.map) baseline_args ;;
+        *) mask35_args "epsilon_greedy" "0.05" "5" ;;
+      esac
+      ;;
+    x35_eps002_r5)
+      case "$map_name" in
+        Paris_1_256.map|den520d.map) baseline_args ;;
+        *) mask35_args "epsilon_greedy" "0.02" "5" ;;
+      esac
+      ;;
+    x35_softmax_r5)
+      case "$map_name" in
+        Paris_1_256.map|den520d.map) baseline_args ;;
+        *) mask35_args "softmax" "0.08" "5" ;;
+      esac
+      ;;
+    x35_thompson_r5)
+      case "$map_name" in
+        Paris_1_256.map|den520d.map) baseline_args ;;
+        *) mask35_args "thompson" "0.05" "5" ;;
+      esac
+      ;;
+    x35_softmax_r9)
+      case "$map_name" in
+        Paris_1_256.map|den520d.map) baseline_args ;;
+        *) mask35_args "softmax" "0.08" "9" ;;
+      esac
+      ;;
+    *)
+      echo "Unknown cfg: $cfg" >&2
+      exit 1
       ;;
   esac
 }
@@ -169,17 +195,25 @@ declare -a MAPS=(
   "warehouse-20-40-10-2-2.map warehouse-20-40-10-2-2-random 1000"
 )
 
+declare -a CONFIGS=(
+  "baseline_x00"
+  "x35_eps005_r5"
+  "x35_eps002_r5"
+  "x35_softmax_r5"
+  "x35_thompson_r5"
+  "x35_softmax_r9"
+)
+
 echo "[$(date '+%F %T')] run_id=$RUN_ID parallel=$PARALLEL scenarios=$SCEN_COUNT time_limit=$TIME_LIMIT data_root=$DATA_ROOT"
 
-for spec in "${MAPS[@]}"; do
-  read -r map scenprefix agents <<< "$spec"
-  full_map="$DATA_ROOT/$map"
-
-  echo "[$(date '+%F %T')] cfg=baseline_x00 map=$map N=$agents"
-  run_map_chunk "baseline_x00" "$full_map" "$scenprefix" "$agents" "$(baseline_args)" "$CHECKPOINT_DIR"
-
-  echo "[$(date '+%F %T')] cfg=mapaware_x35 map=$map N=$agents"
-  run_map_chunk "mapaware_x35" "$full_map" "$scenprefix" "$agents" "$(map_aware_args "$map")" "$CHECKPOINT_DIR"
+for cfg in "${CONFIGS[@]}"; do
+  for spec in "${MAPS[@]}"; do
+    read -r map scenprefix agents <<< "$spec"
+    full_map="$DATA_ROOT/$map"
+    cargs="$(args_for_cfg_and_map "$cfg" "$map")"
+    echo "[$(date '+%F %T')] cfg=$cfg map=$map N=$agents"
+    run_map_chunk "$cfg" "$full_map" "$scenprefix" "$agents" "$cargs" "$CHECKPOINT_DIR"
+  done
 done
 
 {
@@ -187,7 +221,7 @@ done
   find "$CHECKPOINT_DIR" -type f -name '*.csvchunk' -print0 | sort -z | xargs -0 -r cat
 } > "$RAW_CSV"
 
-python3 "$ROOT_DIR/scripts/summarize_focus5_map_aware_vs_baseline.py" "$RAW_CSV"
+python3 "$ROOT_DIR/scripts/summarize_focus5_map_aware_suite.py" "$RAW_CSV"
 
 echo "Done"
 echo "RawCSV: $RAW_CSV"

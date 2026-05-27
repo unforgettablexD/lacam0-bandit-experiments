@@ -124,6 +124,30 @@ int pick_arm(std::mt19937 &rng)
     return best;
   }
 
+  if (policy == "softmax" || policy == "boltzmann") {
+    const double temp = std::max(0.02, PIBT::BANDIT_EPSILON);
+    std::array<double, BANDIT_ARM_COUNT> logits = {0.0, 0.0, 0.0};
+    double max_logit = -1e18;
+    for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
+      const auto mean = PIBT_ARM_REWARDS[a] / std::max(1, PIBT_ARM_PULLS[a]);
+      logits[a] = mean / temp;
+      max_logit = std::max(max_logit, logits[a]);
+    }
+    std::array<double, BANDIT_ARM_COUNT> probs = {0.0, 0.0, 0.0};
+    double sum_exp = 0.0;
+    for (int a = 0; a < BANDIT_ARM_COUNT; ++a) {
+      probs[a] = std::exp(logits[a] - max_logit);
+      sum_exp += probs[a];
+    }
+    if (sum_exp <= 0.0) {
+      std::uniform_int_distribution<int> UArm(0, BANDIT_ARM_COUNT - 1);
+      return UArm(rng);
+    }
+    for (int a = 0; a < BANDIT_ARM_COUNT; ++a) probs[a] /= sum_exp;
+    std::discrete_distribution<int> Pick({probs[0], probs[1], probs[2]});
+    return Pick(rng);
+  }
+
   if (policy == "random_uniform" || policy == "random" || policy == "uniform_random") {
     std::uniform_int_distribution<int> UArm(0, BANDIT_ARM_COUNT - 1);
     return UArm(rng);
@@ -184,6 +208,20 @@ void PIBT::set_reward_config(const std::string &reward_autoscale_mode,
   REWARD_AUTOSCALE_MODE = reward_autoscale_mode.empty() ? "off" : reward_autoscale_mode;
   REWARD_WEIGHT_LEARNING =
       reward_weight_learning.empty() ? "off" : reward_weight_learning;
+}
+
+void PIBT::set_reward_weights(double w_goal, double w_delay, double w_stay,
+                              double w_leave, double w_occ,
+                              double w_congestion, double w_no_progress)
+{
+  auto clamp_w = [](double x) { return std::max(0.0, std::min(3.0, x)); };
+  W_GOAL = clamp_w(w_goal);
+  W_DELAY = clamp_w(w_delay);
+  W_STAY = clamp_w(w_stay);
+  W_LEAVE = clamp_w(w_leave);
+  W_OCC = clamp_w(w_occ);
+  W_CONG = clamp_w(w_congestion);
+  W_NOPROG = clamp_w(w_no_progress);
 }
 
 void PIBT::set_runtime_config(bool events_log_enabled, int regret_trials)
@@ -416,8 +454,8 @@ bool PIBT::funcPIBT(const int i, const Config &Q_from, Config &Q_to)
       const auto nb_agent = occupied_now[nb->id];
       if (nb_agent != NO_AGENT && nb_agent != i) local_congestion += 1;
     }
-    const double congestion_penalty = 0.08 * static_cast<double>(local_congestion);
-    const double no_progress_penalty = (!at_goal_now && d_next >= d_now) ? 0.15 : 0.0;
+    const double congestion_penalty = 0.05 * static_cast<double>(local_congestion);
+    const double no_progress_penalty = (!at_goal_now && d_next >= d_now) ? 0.08 : 0.0;
     const double goal_bonus = (!at_goal_now && at_goal_next) ? 0.50 : 0.0;
     ST_GOAL.update(goal_bonus);
     ST_DELAY.update(delay_penalty);

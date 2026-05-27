@@ -32,6 +32,27 @@
 
 ## Main Experimental Results (Current State)
 
+### Reward-weight tuning (SOC-first, map-aware)
+
+- Run ID: 20260526_184756_lacam0_focus5_reward_weight_tuning
+- Best profile: w_balA (used on non-Paris/non-den520d maps with X35 mask)
+- Aggregate vs baseline_x00:
+  - Mean SOC gain: +0.45%
+  - Worst-map SOC gain: 0.00%
+  - Mean median-CT gain: +7.88%
+  - Mean p95-CT gain: +6.94%
+
+### Promotion confirmation run
+
+- Run ID: 20260526_185647_lacam0_focus5_map_aware_vs_baseline
+- Promoted default behavior:
+  - Paris_1_256 / den520d: baseline_x00
+  - random + warehouses: X35 + w_balA reward weights
+- Confirmation metrics:
+  - Mean SOC gain: +0.45%
+  - Worst-map SOC gain: 0.00%
+  - Solved guard preserved on all maps (25/25 each)
+
 ### 64-mask findings (5 maps, 25 scenarios/map)
 
 - Best global mask tier by mean SOC gain: X34/X35/X36/X37 (~+0.4112%).
@@ -69,5 +90,5 @@
 
 ## Recommended Next Step
 
-- Keep mapaware_x35 as default robust profile.
-- Continue tuning stall sensitivity and reward weights to recover part of random-map SOC while preserving all-map non-negative behavior.
+- Keep promoted map-aware default as X35 + w_balA on random/warehouses, baseline on Paris/den520d.
+- Focus next on reducing random-map p95 volatility while preserving worst-map SOC >= 0 and solved guard.

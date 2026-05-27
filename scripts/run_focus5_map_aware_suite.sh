@@ -140,6 +140,10 @@ baseline_args() {
   echo "--no_pibt_bandit --no_order_bandit --no_branch_bandit --no_scheduler_bandit --no_random_bandit --no_dist_bandit --no_events_log"
 }
 
+mask35_w_balA_args() {
+  echo "--no_order_bandit --no_branch_bandit --no_scheduler_bandit --bandit_policy epsilon_greedy --bandit_epsilon 0.05 --bandit_epsilon_final 0.05 --bandit_epsilon_decay_steps 0 --pibt_regret_trials 5 --reward_w_goal 1.2 --reward_w_delay 0.9 --reward_w_stay 0.8 --reward_w_leave 1.0 --reward_w_occ 0.9 --reward_w_cong 0.8 --reward_w_noprog 0.9 --no_events_log"
+}
+
 args_for_cfg_and_map() {
   local cfg="$1"
   local map_name="$2"
@@ -150,7 +154,7 @@ args_for_cfg_and_map() {
     mapaware_x35)
       case "$map_name" in
         Paris_1_256.map|den520d.map) baseline_args ;;
-        *) mask_args 35 ;;
+        *) mask35_w_balA_args ;;
       esac
       ;;
     mapaware_x36)

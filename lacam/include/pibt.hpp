@@ -69,6 +69,9 @@ struct PIBT {
                                 int bandit_epsilon_decay_steps);
   static void set_reward_config(const std::string &reward_autoscale_mode,
                                 const std::string &reward_weight_learning);
+  static void set_reward_weights(double w_goal, double w_delay, double w_stay,
+                                 double w_leave, double w_occ,
+                                 double w_congestion, double w_no_progress);
   static void set_runtime_config(bool events_log_enabled, int regret_trials);
   static void set_forced_pibt_arm(int arm);  // arm<0 disables forcing
 
